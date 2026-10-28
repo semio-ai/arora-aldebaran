@@ -79,8 +79,9 @@ jobs:
           channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' arora-sdk/rust-toolchain.toml)
           rustup toolchain install "$channel" --profile minimal --component clippy
           echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
-          .github/scripts/patch-arora-sdk.sh arora-sdk
-          RUSTUP_TOOLCHAIN=$channel cargo update --workspace
+          # Fails when an arora-sdk crate still resolves from crates.io, its version
+          # past this workspace's requirement: that crate would go untested.
+          RUSTUP_TOOLCHAIN=$channel .github/scripts/patch-arora-sdk.sh arora-sdk
           echo "arora-sdk $(git -C arora-sdk rev-parse --short HEAD), toolchain $channel" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clippy (runner)
