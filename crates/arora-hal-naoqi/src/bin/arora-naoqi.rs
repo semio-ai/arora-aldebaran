@@ -302,7 +302,10 @@ mod tests {
                 .studio
                 .choice()
         };
-        assert_eq!(choice(&["arora-naoqi", "tcp://nao.local:9559"]), Choice::Studio);
+        assert_eq!(
+            choice(&["arora-naoqi", "tcp://nao.local:9559"]),
+            Choice::Studio
+        );
         assert_eq!(
             choice(&["arora-naoqi", "--no-studio", "tcp://nao.local:9559"]),
             Choice::Local

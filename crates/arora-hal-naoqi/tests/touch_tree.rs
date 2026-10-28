@@ -1,5 +1,6 @@
 //! `trees/touch.groot.xml` on the Arora runtime against an in-process fake NAOqi: a touch of
-//! the front of the head greets.
+//! the front of the head greets, the greeting plays to its end once started, and the next
+//! touch greets again.
 
 #[allow(dead_code)]
 mod fake_naoqi;
@@ -8,7 +9,7 @@ use std::time::Duration;
 
 use arora::{Arora, HostModule};
 use arora_hal::Hal;
-use arora_hal_naoqi::gestures::naoqi_gestures;
+use arora_hal_naoqi::gestures::{naoqi_gestures, HANDS_READY_DURATION};
 use arora_hal_naoqi::say::{self, naoqi_say};
 use arora_hal_naoqi::{ready_tree_initial_state, NaoqiHal, NaoqiRobotConfig, COMMAND_READY};
 use arora_simple_data_store::SimpleDataStore;
@@ -48,24 +49,51 @@ async fn a_touch_of_the_head_greets() {
     step(&mut device, 20);
     assert!(robot.said.lock().unwrap().is_empty(), "untouched, it rests");
 
-    robot.raise_event("FrontTactilTouched", 1.0);
-    let greeted = |robot: &FakeNaoqi| {
+    let greetings = |robot: &FakeNaoqi| {
         robot
             .said
             .lock()
             .unwrap()
             .iter()
-            .any(|text| text == "Hello, you touched my head")
+            .filter(|text| *text == "Hello, you touched my head")
+            .count()
     };
+    let last_hand_stiffness = |robot: &FakeNaoqi| {
+        robot
+            .set_stiffnesses
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find_map(|(names, values)| {
+                names
+                    .iter()
+                    .position(|name| name == "LHand")
+                    .map(|index| values[index])
+            })
+    };
+    let gesture_steps = (HANDS_READY_DURATION.as_millis() / STEP.as_millis()) as usize + 50;
+
+    // A tap: touched, then released while the gesture plays.
+    robot.raise_event("FrontTactilTouched", 1.0);
     for _ in 0..100 {
-        step(&mut device, 5);
-        if greeted(&robot) {
+        step(&mut device, 1);
+        if last_hand_stiffness(&robot) == Some(0.6) {
             break;
         }
     }
-    assert!(
-        greeted(&robot),
-        "a touch greets: behavior error {:?}, said {:?}",
+    assert_eq!(last_hand_stiffness(&robot), Some(0.6), "the gesture plays");
+    robot.raise_event("FrontTactilTouched", 0.0);
+    // Released, the greeting plays to its end: said, and the hands relaxed.
+    step(&mut device, gesture_steps);
+    let relaxed_by = std::time::Instant::now() + Duration::from_secs(5);
+    while last_hand_stiffness(&robot) != Some(0.0) && std::time::Instant::now() < relaxed_by {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        greetings(&robot),
+        1,
+        "a tap greets: behavior error {:?}, said {:?}",
         device
             .behavior_error()
             .borrow()
@@ -73,11 +101,22 @@ async fn a_touch_of_the_head_greets() {
             .map(|e| e.to_string()),
         robot.said.lock().unwrap()
     );
-    let moved = robot
-        .set_angles
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|(names, _, _)| names.iter().any(|name| name == "LHand"));
-    assert!(moved, "the hands play the gesture");
+    assert_eq!(
+        last_hand_stiffness(&robot),
+        Some(0.0),
+        "the hands are relaxed once over"
+    );
+
+    // Released, it rests; the next touch greets again.
+    step(&mut device, 20);
+    assert_eq!(greetings(&robot), 1, "untouched, it rests");
+    robot.raise_event("FrontTactilTouched", 1.0);
+    step(&mut device, 10);
+    robot.raise_event("FrontTactilTouched", 0.0);
+    step(&mut device, gesture_steps);
+    let greeted_by = std::time::Instant::now() + Duration::from_secs(5);
+    while greetings(&robot) < 2 && std::time::Instant::now() < greeted_by {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(greetings(&robot), 2, "the next touch greets again");
 }
