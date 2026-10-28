@@ -303,6 +303,21 @@ async fn dropping_the_hal_stops_the_base() {
     );
 }
 
+/// The HAL puts the robot to rest when it goes, unless configured not to.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_the_hal_puts_the_robot_to_rest() {
+    let (robot, hal) = start().await;
+    assert_eq!(robot.rested.load(Ordering::SeqCst), 0);
+    drop(hal);
+    assert_eq!(robot.rested.load(Ordering::SeqCst), 1);
+
+    let mut config = NaoqiRobotConfig::with_url(&robot.url);
+    config.rest_on_exit = false;
+    let hal = NaoqiHal::new(config).await.expect("connect the HAL");
+    drop(hal);
+    assert_eq!(robot.rested.load(Ordering::SeqCst), 1);
+}
+
 /// A stop that failed leaves the base moving: the HAL still stops it when it goes.
 #[tokio::test(flavor = "multi_thread")]
 async fn dropping_the_hal_stops_the_base_after_a_failed_stop() {

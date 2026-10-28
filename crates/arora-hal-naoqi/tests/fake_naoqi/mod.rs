@@ -2,7 +2,7 @@
 //! in-process with `qi`, with hooks to inspect the commands received and to drive sensors.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -40,6 +40,8 @@ pub struct FakeNaoqi {
     pub set_stiffnesses: StiffnessCommands,
     pub leds: Arc<Mutex<Vec<(String, i32, f32)>>>,
     pub move_toward: Arc<Mutex<Vec<(f32, f32, f32)>>>,
+    /// How many times `rest` was called.
+    pub rested: Arc<AtomicUsize>,
     /// When set, `moveToward` fails without moving.
     pub move_toward_fails: Arc<AtomicBool>,
     /// How long `setAngles` takes.
@@ -109,6 +111,7 @@ impl FakeNaoqi {
         let leds = Arc::new(Mutex::new(Vec::new()));
         let move_toward = Arc::new(Mutex::new(Vec::new()));
         let move_toward_fails = Arc::new(AtomicBool::new(false));
+        let rested = Arc::new(AtomicUsize::new(0));
         let set_angles_delay = Arc::new(Mutex::new(Duration::ZERO));
         let sonar_subscribers = Arc::new(Mutex::new(Vec::new()));
         let life_state = Arc::new(Mutex::new("solitary".to_string()));
@@ -124,6 +127,7 @@ impl FakeNaoqi {
                 move_toward.clone(),
                 move_toward_fails.clone(),
                 set_angles_delay.clone(),
+                rested.clone(),
             ),
         );
         init.add_service_object(
@@ -159,6 +163,7 @@ impl FakeNaoqi {
             set_stiffnesses,
             leds,
             move_toward,
+            rested,
             move_toward_fails,
             set_angles_delay,
             sonar_subscribers,
@@ -251,6 +256,7 @@ fn almotion(
     move_toward: Arc<Mutex<Vec<(f32, f32, f32)>>>,
     move_toward_fails: Arc<AtomicBool>,
     set_angles_delay: Arc<Mutex<Duration>>,
+    rested: Arc<AtomicUsize>,
 ) -> AnyObject {
     let mut builder = ObjectBuilder::new();
     builder.add_method("getBodyNames", |_chain: String| async move {
@@ -326,7 +332,18 @@ fn almotion(
             Ok(())
         }
     });
+    add_rest(&mut builder, rested);
     AnyObject::new(builder.build())
+}
+
+fn add_rest(builder: &mut ObjectBuilder, rested: Arc<AtomicUsize>) {
+    builder.add_method("rest", move |(): ()| {
+        let rested = rested.clone();
+        async move {
+            rested.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    });
 }
 
 /// The sonars measure only while someone is subscribed to `ALSonar`.

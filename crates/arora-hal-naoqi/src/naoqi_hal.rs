@@ -23,6 +23,10 @@ type Node = qi::node::Node<qi::service_directory::Client>;
 /// How long dropping the HAL waits for the robot to stop moving and release its sonars.
 const STOP_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// How long dropping the HAL waits for the robot to reach its rest posture. Giving up
+/// cancels the call, which leaves the robot where it got to: the wait is generous.
+const REST_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// A name of its own for each HAL subscribing to `ALSonar`, so that one HAL going does not
 /// turn off the sonars another one, on the same robot, still reads.
 fn sonar_subscriber_name() -> String {
@@ -848,10 +852,13 @@ impl Hal for NaoqiHal {
     }
 }
 
-/// Dropping the HAL stops its tasks, then the robot's base, and releases the sonars: a
+/// Dropping the HAL stops its tasks, then the robot's base, puts the robot to rest (unless
+/// [`rest_on_exit`](NaoqiRobotConfig::rest_on_exit) is off) and releases the sonars: a
 /// velocity command persists in NAOqi, so a robot left moving would keep moving without its
-/// controller. Within a multi-threaded runtime the drop waits for that, up to
-/// [`STOP_TIMEOUT`]; elsewhere it is done from a task of the HAL's runtime.
+/// controller, and a robot left stiff would keep its joints powered. Within a
+/// multi-threaded runtime the drop waits for all that, up to [`STOP_TIMEOUT`] for the base
+/// and the sonars and [`REST_TIMEOUT`] for the rest; elsewhere it is done from a task of the
+/// HAL's runtime.
 impl Drop for NaoqiHal {
     fn drop(&mut self) {
         for task in &self.tasks {
@@ -863,7 +870,7 @@ impl Drop for NaoqiHal {
         }
         let inner = Arc::clone(&self.inner);
         let shutdown = async move {
-            let done = tokio::time::timeout(STOP_TIMEOUT, async {
+            let stopped = tokio::time::timeout(STOP_TIMEOUT, async {
                 // The writer may be in the middle of a poll on another thread: once it is
                 // gone, the motion state is the last it will be.
                 if let Some(writer) = writer {
@@ -884,15 +891,32 @@ impl Drop for NaoqiHal {
                         Err(error) => warn!("Cannot stop the robot's base: {error}"),
                     }
                 }
-                if let Some((sonar, name)) = &inner.sonar {
-                    if let Err(error) = sonar.call::<(), _, _>("unsubscribe", name.clone()).await {
-                        warn!("ALSonar.unsubscribe failed: {error}");
-                    }
-                }
             })
             .await;
-            if done.is_err() {
-                warn!("NAOqi did not answer in time: the base may still move, the sonars measure");
+            if stopped.is_err() {
+                warn!("NAOqi did not answer in time: the base may still move");
+            }
+            if inner.config.rest_on_exit {
+                info!("Putting the robot to rest");
+                match tokio::time::timeout(REST_TIMEOUT, inner.motion.call::<(), _, _>("rest", ()))
+                    .await
+                {
+                    Ok(Ok(())) => info!("The robot is at rest"),
+                    Ok(Err(error)) => warn!("ALMotion.rest failed: {error}"),
+                    Err(_) => warn!("The robot did not reach its rest posture in time"),
+                }
+            }
+            if let Some((sonar, name)) = &inner.sonar {
+                let released = tokio::time::timeout(
+                    STOP_TIMEOUT,
+                    sonar.call::<(), _, _>("unsubscribe", name.clone()),
+                )
+                .await;
+                match released {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => warn!("ALSonar.unsubscribe failed: {error}"),
+                    Err(_) => warn!("NAOqi did not answer in time: the sonars still measure"),
+                }
             }
         };
         let multi_threaded = tokio::runtime::Handle::try_current().is_ok_and(|current| {

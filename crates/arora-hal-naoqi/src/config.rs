@@ -43,6 +43,10 @@ pub struct NaoqiRobotConfig {
     /// so that the robot's own life does not move the joints Arora drives.
     #[serde(default = "default_true")]
     pub disable_autonomous_life: bool,
+    /// Put the robot to rest when the HAL goes (`ALMotion.rest`): it sits or crouches, then
+    /// its joints are relaxed, so that a device that stops leaves no joint stiffened.
+    #[serde(default = "default_true")]
+    pub rest_on_exit: bool,
 }
 
 fn default_url() -> String {
@@ -71,6 +75,7 @@ impl Default for NaoqiRobotConfig {
             joint_speed_fraction: default_joint_speed_fraction(),
             sensors: SensorsConfig::default(),
             disable_autonomous_life: true,
+            rest_on_exit: true,
         }
     }
 }
@@ -123,6 +128,7 @@ impl NaoqiRobotConfig {
             joint_speed_fraction,
             sensors,
             disable_autonomous_life,
+            rest_on_exit,
         } = overrides;
         let replace = |field: &mut Option<String>, value: Option<String>| {
             if value.is_some() {
@@ -151,6 +157,9 @@ impl NaoqiRobotConfig {
         }
         if let Some(disable) = disable_autonomous_life {
             self.disable_autonomous_life = disable;
+        }
+        if let Some(rest) = rest_on_exit {
+            self.rest_on_exit = rest;
         }
     }
 }
@@ -181,6 +190,8 @@ pub struct NaoqiRobotConfigOverrides {
     pub sensors: Option<SensorsOverrides>,
     #[serde(default)]
     pub disable_autonomous_life: Option<bool>,
+    #[serde(default)]
+    pub rest_on_exit: Option<bool>,
 }
 
 /// How NAOqi joint names (`LShoulderPitch`) become Arora joint ids.
