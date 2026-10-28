@@ -351,16 +351,38 @@ async fn dropping_the_hal_stops_the_base_after_a_cancelled_stop() {
 #[tokio::test(flavor = "multi_thread")]
 async fn subscribes_to_the_sonars_while_it_runs() {
     let (robot, hal) = start().await;
+    assert_eq!(robot.sonar_subscribers.lock().unwrap().len(), 1);
+    // A second HAL on the same robot subscribes under a name of its own, and keeps the
+    // sonars on when the first one goes.
+    let second = NaoqiHal::new(NaoqiRobotConfig::with_url(&robot.url))
+        .await
+        .expect("connect the second HAL");
+    let names = robot.sonar_subscribers.lock().unwrap().clone();
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0], names[1]);
+    drop(hal);
     assert_eq!(
         robot.sonar_subscribers.lock().unwrap().as_slice(),
-        ["arora-naoqi".to_string()]
+        &names[1..]
     );
-    drop(hal);
+    drop(second);
     assert!(robot.sonar_subscribers.lock().unwrap().is_empty());
 
     let mut config = NaoqiRobotConfig::with_url(&robot.url);
     config.sensors.sonar = false;
     let _hal = NaoqiHal::new(config).await.expect("connect the HAL");
+    assert!(robot.sonar_subscribers.lock().unwrap().is_empty());
+}
+
+/// A start that fails leaves no sonar subscription behind.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_start_leaves_the_sonars_alone() {
+    let robot = FakeNaoqi::start().await;
+    let mut config = NaoqiRobotConfig::with_url(&robot.url);
+    // HeadYaw extended to HeadPitch's id: the joints collide.
+    config.joint_ids =
+        serde_json::from_str(r#"{"mode": "extend", "ids": {"HeadYaw": "head_pitch"}}"#).unwrap();
+    assert!(NaoqiHal::new(config).await.is_err());
     assert!(robot.sonar_subscribers.lock().unwrap().is_empty());
 }
 

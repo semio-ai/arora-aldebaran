@@ -20,8 +20,10 @@ All notable changes to `arora-hal-naoqi`. The format follows
   keeps the others: a credentials-only override no longer re-enables disabled sensors, and
   `"sensors"` switches only the families it names.
 - Dropping the HAL drops the commands still queued and stops a base that may be moving
-  (`ALMotion.moveToward(0, 0, 0)`), including after a stop that failed or was cut short.
-- With sonar sensing on, the HAL subscribes to `ALSonar` (which turns the sonars on) and
+  (`ALMotion.moveToward(0, 0, 0)`), including after a stop that failed or was cut short,
+  once the queued-write task is gone.
+- With sonar sensing on, the HAL subscribes to `ALSonar` (which turns the sonars on), under
+  a name of its own so that HALs sharing a robot do not turn each other's sonars off, and
   unsubscribes when it goes.
 - The crate moved from `semio-ai/arora-sdk` to its own repository,
   `semio-ai/arora-aldebaran`. It now depends on the published Arora crates
@@ -36,6 +38,8 @@ All notable changes to `arora-hal-naoqi`. The format follows
   older base velocity no longer overwrites a newer one.
 - A stop no longer overtakes the sentence before it, and a new sentence is sent only
   once the stop before it is done.
+- The standard no longer gives a hand's position, velocity and target in radians: they
+  are its opening, from 0 (closed) to 1 (open).
 - A sentence whose `Say` is halted stops even when the tree ticks no `Say` any more.
 - A touch raised while the HAL subscribes is no longer lost, and a feed registering while
   a change is published no longer misses it.

@@ -23,8 +23,20 @@ type Node = qi::node::Node<qi::service_directory::Client>;
 /// How long dropping the HAL waits for the robot to stop moving and release its sonars.
 const STOP_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// The name the HAL subscribes to `ALSonar` under.
-const SONAR_SUBSCRIBER: &str = "arora-naoqi";
+/// A name of its own for each HAL subscribing to `ALSonar`, so that one HAL going does not
+/// turn off the sonars another one, on the same robot, still reads.
+fn sonar_subscriber_name() -> String {
+    static HALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_nanos())
+        .unwrap_or_default();
+    format!(
+        "arora-naoqi-{}-{nanos}-{}",
+        std::process::id(),
+        HALS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
 
 /// A NAOqi robot (NAO, Pepper) as an [`arora_hal::Hal`], driven through the `qi` framework.
 ///
@@ -46,6 +58,9 @@ pub struct NaoqiHal {
     /// The sampling, event and queued-write tasks, aborted with the HAL: a command still
     /// queued when the HAL goes is not sent.
     tasks: Vec<AbortHandle>,
+    /// The queued-write task, awaited once aborted so that the drop reads the motion state
+    /// it may have changed.
+    writer: Option<tokio::task::JoinHandle<()>>,
     /// The runtime the HAL's tasks run on, where its voice speaks.
     runtime: tokio::runtime::Handle,
 }
@@ -58,8 +73,9 @@ struct Inner {
     motion: AnyObject,
     tts: AnyObject,
     leds: Option<AnyObject>,
-    /// `ALSonar`, when the HAL subscribed to it: the sonars measure only while someone is.
-    sonar: Option<AnyObject>,
+    /// `ALSonar` and the name the HAL subscribed to it under: the sonars measure only while
+    /// someone is subscribed.
+    sonar: Option<(AnyObject, String)>,
     joints: JointTable,
     description: HalDescription,
     /// The current state: sampled sensors, received events and cached commands.
@@ -154,11 +170,6 @@ impl NaoqiHal {
         if config.disable_autonomous_life {
             disable_autonomous_life(&node).await;
         }
-        let sonar = if config.sensors.sonar {
-            subscribe_to_sonar(&node).await
-        } else {
-            None
-        };
         let description = describe(&config, &node, &memory, &motion).await;
         let names: Vec<String> = motion
             .call("getBodyNames", "Body".to_string())
@@ -167,6 +178,13 @@ impl NaoqiHal {
                 NaoqiRobotError::Connection(format!("cannot list the joints: {error}"))
             })?;
         let joints = JointTable::new(names, &config.joint_ids).map_err(NaoqiRobotError::Config)?;
+        // Last of the steps that may fail the start, so that a failed start leaves no
+        // subscription behind.
+        let sonar = if config.sensors.sonar {
+            subscribe_to_sonar(&node).await
+        } else {
+            None
+        };
         let unknown = || "unknown".to_string();
         info!(
             "Connected to NAOqi at {}: {} robot, hardware {}, NAOqi {}, {} joints",
@@ -228,20 +246,17 @@ impl NaoqiHal {
         // into one change (per-key newest wins) so slow round-trips coalesce, and drives the
         // same write path as `write()`. It is aborted with the HAL.
         let (outbound, mut outbound_rx) = futures::channel::mpsc::unbounded::<StateChange>();
-        let writer = Arc::clone(&inner);
-        tasks.push(
-            tokio::spawn(async move {
-                while let Some(mut changes) = outbound_rx.next().await {
-                    while let Ok(later) = outbound_rx.try_recv() {
-                        fold_newest_wins(&mut changes, later);
-                    }
-                    if let Err(error) = writer.write(changes).await {
-                        warn!("Queued write failed: {error}");
-                    }
+        let queued = Arc::clone(&inner);
+        let writer = tokio::spawn(async move {
+            while let Some(mut changes) = outbound_rx.next().await {
+                while let Ok(later) = outbound_rx.try_recv() {
+                    fold_newest_wins(&mut changes, later);
                 }
-            })
-            .abort_handle(),
-        );
+                if let Err(error) = queued.write(changes).await {
+                    warn!("Queued write failed: {error}");
+                }
+            }
+        });
         // The voice's task; it ends once every voice handed out is gone.
         let (speech, speech_rx) = futures::channel::mpsc::unbounded();
         tokio::spawn(speak(inner.tts.clone(), speech_rx));
@@ -251,6 +266,7 @@ impl NaoqiHal {
             outbound,
             speech,
             tasks,
+            writer: Some(writer),
             runtime: tokio::runtime::Handle::current(),
         })
     }
@@ -407,7 +423,7 @@ async fn disable_autonomous_life(node: &Node) {
 
 /// Subscribes to `ALSonar`, which turns the sonars on. A robot without the service, or a
 /// refusal, leaves the sonar keys to whoever else turned them on, warned.
-async fn subscribe_to_sonar(node: &Node) -> Option<AnyObject> {
+async fn subscribe_to_sonar(node: &Node) -> Option<(AnyObject, String)> {
     let sonar = match node.service("ALSonar").await {
         Ok(sonar) => sonar,
         Err(error) => {
@@ -415,11 +431,9 @@ async fn subscribe_to_sonar(node: &Node) -> Option<AnyObject> {
             return None;
         }
     };
-    match sonar
-        .call::<(), _, _>("subscribe", SONAR_SUBSCRIBER.to_string())
-        .await
-    {
-        Ok(()) => Some(sonar),
+    let name = sonar_subscriber_name();
+    match sonar.call::<(), _, _>("subscribe", name.clone()).await {
+        Ok(()) => Some((sonar, name)),
         Err(error) => {
             warn!("ALSonar.subscribe failed, the sonars may not measure: {error}");
             None
@@ -843,16 +857,20 @@ impl Drop for NaoqiHal {
         for task in &self.tasks {
             task.abort();
         }
-        let moving = *lock(&self.inner.base_moving);
-        if !moving && self.inner.sonar.is_none() {
-            return;
+        let writer = self.writer.take();
+        if let Some(writer) = &writer {
+            writer.abort();
         }
         let inner = Arc::clone(&self.inner);
         let shutdown = async move {
             let done = tokio::time::timeout(STOP_TIMEOUT, async {
-                if moving {
-                    // After any write under way, which an aborted task gives up.
-                    let _order = inner.write_order.lock().await;
+                // The writer may be in the middle of a poll on another thread: once it is
+                // gone, the motion state is the last it will be.
+                if let Some(writer) = writer {
+                    let _ = writer.await;
+                }
+                let _order = inner.write_order.lock().await;
+                if *lock(&inner.base_moving) {
                     match inner
                         .motion
                         .call::<(), _, _>("moveToward", (0.0f32, 0.0f32, 0.0f32))
@@ -866,11 +884,8 @@ impl Drop for NaoqiHal {
                         Err(error) => warn!("Cannot stop the robot's base: {error}"),
                     }
                 }
-                if let Some(sonar) = &inner.sonar {
-                    if let Err(error) = sonar
-                        .call::<(), _, _>("unsubscribe", SONAR_SUBSCRIBER.to_string())
-                        .await
-                    {
+                if let Some((sonar, name)) = &inner.sonar {
+                    if let Err(error) = sonar.call::<(), _, _>("unsubscribe", name.clone()).await {
                         warn!("ALSonar.unsubscribe failed: {error}");
                     }
                 }

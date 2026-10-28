@@ -55,12 +55,12 @@ to an id with a `.`, or two joints to the same id.
 
 | Key | Direction | NAOqi source or target |
 |---|---|---|
-| `<joint>.position` (rad), `.velocity` (rad/s, derived), `.stiffness`, `.temperature` (°C), `.current` (A) | sensed | `ALMemory` `Device/SubDeviceList/<Joint>/…` |
+| `<joint>.position` (rad; a hand's opening, 0 to 1), `.velocity` (per second, derived), `.stiffness`, `.temperature` (°C), `.current` (A) | sensed | `ALMemory` `Device/SubDeviceList/<Joint>/…` |
 | `battery.charge` (0..1), `battery.current` (A), `battery.charging` | sensed | `ALMemory` battery keys |
 | `imu.angle.{x,y}`, `imu.gyroscope.{x,y,z}`, `imu.accelerometer.{x,y,z}` | sensed | `ALMemory` inertial sensor keys |
 | `sonar.{left,right}.distance` (m) | sensed | `ALMemory` ultrasound keys |
 | `touch.head.{front,middle,rear}`, `touch.hand.{left,right}.{back,left,right}`, `bumper.{left,right}`, `chest_button` | sensed (events) | `ALMemory` tactile events |
-| `<joint>.target_position` (rad) | commanded | `ALMotion.setAngles` |
+| `<joint>.target_position` (rad; a hand's opening, 0 to 1) | commanded | `ALMotion.setAngles` |
 | `<joint>.target_stiffness` (0..1) | commanded | `ALMotion.setStiffnesses` |
 | `led.<group>.color` (`0xRRGGBB`), `led.<group>.intensity` | commanded | `ALLeds.fadeRGB`, `ALLeds.setIntensity` |
 | `velocity.{x,y}`, `rotation.z` (normalized -1..1) | commanded | `ALMotion.moveToward` |
