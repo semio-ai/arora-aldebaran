@@ -154,9 +154,9 @@ dependencies = [
 
 [[package]]
 name = "arora"
-version = "15.0.0"
+version = "16.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fc3a33048c0ee4ddf1c18c63a19a41d4b1ba7a8ce2ba8133787efbc2cc40254"
+checksum = "5f419205a180e46eb00c05bbb39a1b49873ad37f3342a6bacc36ce0f08a17172"
 dependencies = [
  "anyhow",
  "arora-behavior",
@@ -179,7 +179,6 @@ dependencies = [
  "log",
  "ratatui",
  "rustls",
- "serde",
  "serde_json",
  "sysinfo 0.33.1",
  "tokio",
@@ -401,16 +400,15 @@ dependencies = [
 
 [[package]]
 name = "arora-studio-bridge-client"
-version = "10.0.0"
+version = "11.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "655847e03688015f32d2a3dc0b14ea94499680c33aa0e143730928a518a0f3a0"
+checksum = "5602575ef24d923ae0acbf006a6bd7e29a8be6357314ab665b175fa10d644213"
 dependencies = [
  "arora-bridge",
  "arora-types",
  "async-stream",
  "async-trait",
  "chrono",
- "crypto_secretbox",
  "firestore",
  "futures",
  "futures-util",
@@ -420,9 +418,9 @@ dependencies = [
  "rcgen 0.13.2",
  "reqwest",
  "rustls",
+ "semio-studio-auth",
  "serde",
  "serde_json",
- "strfmt",
  "studio-bridge-msgs",
  "sync_wrapper",
  "tokio",
@@ -4469,6 +4467,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "semio-studio-auth"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ede50887ae578bf5d4e17349c908aeed4091132cf2d15280afd69d7d5c84ce07"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "crypto_secretbox",
+ "dirs",
+ "log",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "webpki-roots",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4883,12 +4900,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "strfmt"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "046d549b88a663d317cd04d39696fca5f77db4db44e1db65bfb9dee7f9e680bd"
 
 [[package]]
 name = "strsim"

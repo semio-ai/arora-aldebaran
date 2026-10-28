@@ -8,6 +8,13 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ### Added
 
+- The `arora-naoqi` runner takes `--device <NAME>` (`ARORA_DEVICE`),
+  `--device-dir <PATH>` (`ARORA_DEVICE_DIR`) and `--bridge-port <PORT>`
+  (`ARORA_BRIDGE_PORT`, 9000 when unset), arora 16's `RunnerArgs`: the device's name, its
+  directory, and the port of its open local bridge, so several devices run on one host.
+  Built with `studio`, the device's Studio credential is its name's in Semio's device
+  store, and a run that connects given a device directory and no name is refused.
+  `DEVICE_LOCAL_ID` and `DEVICE_DIR` are deprecated, as arora 16 says.
 - `rest_on_exit` (on by default): when the HAL goes, the runner's exit included, it puts
   the robot to rest (`ALMotion.rest`: it sits or crouches, then its joints are relaxed), so
   no joint stays stiffened.
@@ -18,6 +25,24 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ### Changed
 
+- **Breaking:** `runner` no longer enables `studio`: the `arora-naoqi` runner it builds
+  serves the open local bridge and takes no Studio option. A runner that connects to Semio
+  Studio is built with `--features runner,studio`.
+- **Breaking:** requires arora 16. The `arora-naoqi` runner built with `studio` connects to
+  Semio Studio on every run unless the run passes `--no-studio`, whatever the device holds.
+  `--studio` and `ARORA_STUDIO` are gone. It takes `--no-studio` only under this crate's
+  `studio` feature, whichever other crate a build enables arora's `studio-bridge` for:
+  without `studio` it refuses `--no-studio` and serves the open local bridge.
+- **Breaking:** a runner built with `studio` enrolls a device that is not enrolled with
+  Semio Studio before it connects (arora 16). A person enters the code the run shows (in
+  the terminal UI's prompt line, and in the log) in Studio, choosing the device's owner;
+  or the run redeems the enrollment token `STUDIO_ENROLLMENT_TOKEN` holds.
+  `DEVICE_OWNERS` and the owner prompt are gone, and a device an earlier `arora-naoqi`
+  registered enrolls again.
+
+  To migrate, build a runner that connects with `--features runner,studio` and drop
+  `--studio` and `ARORA_STUDIO` from its runs; pass `--no-studio` to a run of it that
+  should serve the local bridge.
 - **Breaking:** `NaoqiRobotConfig::apply_overrides` takes a `NaoqiRobotConfigOverrides`.
   An override replaces exactly the fields it sets, even with their default value, and
   keeps the others: a credentials-only override no longer re-enables disabled sensors, and
