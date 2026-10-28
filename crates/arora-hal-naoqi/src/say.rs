@@ -12,7 +12,11 @@
 //! - sentences are keyed by their text (a module call carries no run id): a new text stops
 //!   the one under way and forgets the finished ones;
 //! - a halt is silence: a sentence whose leaf goes [`IDLE_STOP`] unticked is stopped
-//!   (`ALTextToSpeech.stopAll`) and forgotten, so a branch entered anew speaks again;
+//!   (`ALTextToSpeech.stopAll`) and forgotten, so a branch entered anew speaks again. The
+//!   voice's runtime checks for them on its own, so a tree that ticks no `Say` any more
+//!   still falls silent;
+//! - `EndSpeech` ends an episode at once: it stops the sentence under way and forgets
+//!   them all, so the same text asked again right after is said again;
 //! - `viseme` stays at rest ([`SILENCE_VISEME`]): NAO and Pepper have no mouth to shape.
 //!
 //! `voice` is accepted for the contract's sake and ignored: the robot speaks with the voice
@@ -56,6 +60,14 @@ pub mod naoqi_say {
         *viseme = SILENCE_VISEME.to_string();
         lock(&SPEAKING).tick(&text, Instant::now())
     }
+
+    /// End the speech episode: stop the sentence under way, if any, and forget them all, so
+    /// that the next `Say` speaks even a sentence just said. Always `Success`.
+    #[export(id = "0656e4a1-744d-4c58-b138-555da0ef5613")]
+    pub fn end_speech() -> Status {
+        lock(&SPEAKING).stop_all();
+        Status::Success
+    }
 }
 
 /// Give the `say` leaves the robot's voice ([`NaoqiHal::voice`](crate::NaoqiHal::voice)).
@@ -63,6 +75,18 @@ pub mod naoqi_say {
 pub fn install(voice: Voice) {
     let mut speaking = lock(&SPEAKING);
     speaking.stop_all();
+    if let Some(sweeper) = speaking.sweeper.take() {
+        sweeper.abort();
+    }
+    // Halted sentences stop even when no `Say` is ticked any more.
+    let sweeper = voice.runtime().spawn(async {
+        let mut interval = tokio::time::interval(IDLE_STOP / 2);
+        loop {
+            interval.tick().await;
+            lock(&SPEAKING).stop_halted(Instant::now());
+        }
+    });
+    speaking.sweeper = Some(sweeper.abort_handle());
     speaking.voice = Some(voice);
 }
 
@@ -73,6 +97,8 @@ struct Speaking {
     voice: Option<Voice>,
     sentences: HashMap<String, Sentence>,
     warned_mute: bool,
+    /// The task that stops halted sentences between ticks.
+    sweeper: Option<tokio::task::AbortHandle>,
 }
 
 struct Sentence {
@@ -90,20 +116,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Speaking {
     fn tick(&mut self, text: &str, now: Instant) -> Status {
-        // Leaves nobody ticks any more were halted: their sentences stop.
-        let halted: Vec<String> = self
-            .sentences
-            .iter()
-            .filter(|(_, sentence)| now.duration_since(sentence.last_tick) > IDLE_STOP)
-            .map(|(text, _)| text.clone())
-            .collect();
-        for text in halted {
-            if let Some(sentence) = self.sentences.remove(&text) {
-                if sentence.utterance.status() == Status::Running {
-                    self.stop_voice();
-                }
-            }
-        }
+        self.stop_halted(now);
         if text.is_empty() {
             return Status::Success;
         }
@@ -129,6 +142,23 @@ impl Speaking {
         let sentence = self.sentences.get_mut(text).expect("present");
         sentence.last_tick = now;
         sentence.utterance.status()
+    }
+
+    /// Leaves nobody ticks any more were halted: their sentences stop and are forgotten.
+    fn stop_halted(&mut self, now: Instant) {
+        let halted: Vec<String> = self
+            .sentences
+            .iter()
+            .filter(|(_, sentence)| now.duration_since(sentence.last_tick) > IDLE_STOP)
+            .map(|(text, _)| text.clone())
+            .collect();
+        for text in halted {
+            if let Some(sentence) = self.sentences.remove(&text) {
+                if sentence.utterance.status() == Status::Running {
+                    self.stop_voice();
+                }
+            }
+        }
     }
 
     /// Stop the sentence under way, if any, and forget them all.

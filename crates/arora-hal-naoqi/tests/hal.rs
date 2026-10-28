@@ -288,6 +288,20 @@ async fn writes_leds_and_base_velocity() {
     );
 }
 
+/// A velocity command persists in NAOqi: the HAL stops the base when it goes.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_the_hal_stops_the_base() {
+    let (robot, hal) = start().await;
+    hal.write(StateChange::set(keys::VELOCITY_X, Value::F64(0.5)))
+        .await
+        .unwrap();
+    drop(hal);
+    assert_eq!(
+        robot.move_toward.lock().unwrap().as_slice(),
+        [(0.5f32, 0.0, 0.0), (0.0, 0.0, 0.0)]
+    );
+}
+
 #[tokio::test]
 async fn connection_failures_are_reported() {
     let error = NaoqiHal::new(NaoqiRobotConfig::with_url("tcp://127.0.0.1:1"))

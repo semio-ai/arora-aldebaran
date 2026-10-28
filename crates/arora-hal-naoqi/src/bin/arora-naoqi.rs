@@ -34,7 +34,7 @@ use arora::{Arora, HostModule, RunnerArgs};
 use arora_hal::Hal;
 use arora_hal_naoqi::{
     gestures::naoqi_gestures, ready_tree_initial_state, say, say::naoqi_say, NaoqiHal,
-    NaoqiRobotConfig, COMMAND_READY, READY_REQUEST, READY_TREE,
+    NaoqiRobotConfig, NaoqiRobotConfigOverrides, COMMAND_READY, READY_REQUEST, READY_TREE,
 };
 use arora_simple_data_store::SimpleDataStore;
 use arora_types::data::{DataStore, Key, KeyMeta, StateChange};
@@ -49,13 +49,32 @@ const STEP_PERIOD: Duration = Duration::from_millis(20);
 const READY_KEY: char = 'r';
 
 fn load_config(selector: &str) -> anyhow::Result<NaoqiRobotConfig> {
-    if selector.starts_with("tcp://") || selector.starts_with("tcps://") {
+    if is_address(selector) {
         return Ok(NaoqiRobotConfig::with_url(selector));
     }
-    let file = std::fs::File::open(selector)
-        .with_context(|| format!("failed to open robot config {selector}"))?;
-    serde_json::from_reader(file)
-        .with_context(|| format!("failed to parse robot config {selector}"))
+    read_json(selector)
+}
+
+/// Overrides from an address (it replaces the robot's) or a JSON file (what it sets
+/// replaces the robot's configuration, the rest is kept).
+fn load_overrides(selector: &str) -> anyhow::Result<NaoqiRobotConfigOverrides> {
+    if is_address(selector) {
+        return Ok(NaoqiRobotConfigOverrides {
+            url: Some(selector.to_string()),
+            ..Default::default()
+        });
+    }
+    read_json(selector)
+}
+
+fn is_address(selector: &str) -> bool {
+    selector.starts_with("tcp://") || selector.starts_with("tcps://")
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> anyhow::Result<T> {
+    let file =
+        std::fs::File::open(path).with_context(|| format!("failed to open robot config {path}"))?;
+    serde_json::from_reader(file).with_context(|| format!("failed to parse robot config {path}"))
 }
 
 /// The runner's command line.
@@ -107,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
     let tree = cli.tree()?;
     let mut config = load_config(&cli.robot)?;
     if let Some(overrides) = &cli.overrides {
-        config.apply_overrides(load_config(overrides)?);
+        config.apply_overrides(load_overrides(overrides)?);
     }
 
     // The front end first: it installs the log sink, so the connection's logs are shown.

@@ -108,40 +108,79 @@ impl NaoqiRobotConfig {
         Ok(())
     }
 
-    /// Apply overrides to the current configuration.
-    pub fn apply_overrides(&mut self, overrides: NaoqiRobotConfig) {
-        if overrides.url != default_url() {
-            self.url = overrides.url;
+    /// Apply overrides to the current configuration: what they set replaces the field, even
+    /// with its default value; what they leave out stays as it is.
+    pub fn apply_overrides(&mut self, overrides: NaoqiRobotConfigOverrides) {
+        let NaoqiRobotConfigOverrides {
+            url,
+            user,
+            password,
+            model_family,
+            hardware_version,
+            software_version,
+            joint_ids,
+            sensor_period_ms,
+            joint_speed_fraction,
+            sensors,
+            disable_autonomous_life,
+        } = overrides;
+        let replace = |field: &mut Option<String>, value: Option<String>| {
+            if value.is_some() {
+                *field = value;
+            }
+        };
+        if let Some(url) = url {
+            self.url = url;
         }
-        if overrides.user.is_some() {
-            self.user = overrides.user;
+        replace(&mut self.user, user);
+        replace(&mut self.password, password);
+        replace(&mut self.model_family, model_family);
+        replace(&mut self.hardware_version, hardware_version);
+        replace(&mut self.software_version, software_version);
+        if let Some(joint_ids) = joint_ids {
+            self.joint_ids = joint_ids;
         }
-        if overrides.password.is_some() {
-            self.password = overrides.password;
+        if let Some(period) = sensor_period_ms {
+            self.sensor_period_ms = period;
         }
-        if overrides.model_family.is_some() {
-            self.model_family = overrides.model_family;
+        if let Some(fraction) = joint_speed_fraction {
+            self.joint_speed_fraction = fraction;
         }
-        if overrides.hardware_version.is_some() {
-            self.hardware_version = overrides.hardware_version;
+        if let Some(sensors) = sensors {
+            self.sensors.apply_overrides(sensors);
         }
-        if overrides.software_version.is_some() {
-            self.software_version = overrides.software_version;
-        }
-        if !matches!(overrides.joint_ids, JointIdMapping::SnakeCase) {
-            self.joint_ids = overrides.joint_ids;
-        }
-        if overrides.sensor_period_ms != default_sensor_period_ms() {
-            self.sensor_period_ms = overrides.sensor_period_ms;
-        }
-        if overrides.joint_speed_fraction != default_joint_speed_fraction() {
-            self.joint_speed_fraction = overrides.joint_speed_fraction;
-        }
-        self.sensors = overrides.sensors;
-        if !overrides.disable_autonomous_life {
-            self.disable_autonomous_life = false;
+        if let Some(disable) = disable_autonomous_life {
+            self.disable_autonomous_life = disable;
         }
     }
+}
+
+/// Overrides of a [`NaoqiRobotConfig`]: each field it sets replaces the configuration's, each
+/// field it leaves out keeps it. Same fields and JSON form as the configuration.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct NaoqiRobotConfigOverrides {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub model_family: Option<String>,
+    #[serde(default)]
+    pub hardware_version: Option<String>,
+    #[serde(default)]
+    pub software_version: Option<String>,
+    #[serde(default)]
+    pub joint_ids: Option<JointIdMapping>,
+    #[serde(default)]
+    pub sensor_period_ms: Option<u64>,
+    #[serde(default)]
+    pub joint_speed_fraction: Option<f64>,
+    #[serde(default)]
+    pub sensors: Option<SensorsOverrides>,
+    #[serde(default)]
+    pub disable_autonomous_life: Option<bool>,
 }
 
 /// How NAOqi joint names (`LShoulderPitch`) become Arora joint ids.
@@ -172,6 +211,44 @@ pub struct SensorsConfig {
     pub touch: bool,
 }
 
+/// Overrides of a [`SensorsConfig`]: the families it names are switched, the others kept.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SensorsOverrides {
+    #[serde(default)]
+    pub joints: Option<bool>,
+    #[serde(default)]
+    pub battery: Option<bool>,
+    #[serde(default)]
+    pub inertial: Option<bool>,
+    #[serde(default)]
+    pub sonar: Option<bool>,
+    #[serde(default)]
+    pub touch: Option<bool>,
+}
+
+impl SensorsConfig {
+    fn apply_overrides(&mut self, overrides: SensorsOverrides) {
+        let SensorsOverrides {
+            joints,
+            battery,
+            inertial,
+            sonar,
+            touch,
+        } = overrides;
+        for (field, value) in [
+            (&mut self.joints, joints),
+            (&mut self.battery, battery),
+            (&mut self.inertial, inertial),
+            (&mut self.sonar, sonar),
+            (&mut self.touch, touch),
+        ] {
+            if let Some(value) = value {
+                *field = value;
+            }
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -196,8 +273,8 @@ mod tests {
     fn defaults_are_valid_and_overridable() {
         let mut config = NaoqiRobotConfig::default();
         assert!(config.validate().is_ok());
-        config.apply_overrides(NaoqiRobotConfig {
-            url: "tcp://nao.local:9559".into(),
+        config.apply_overrides(NaoqiRobotConfigOverrides {
+            url: Some("tcp://nao.local:9559".into()),
             password: Some("secret".into()),
             ..Default::default()
         });
@@ -213,6 +290,35 @@ mod tests {
         );
         assert!(!config.disable_autonomous_life, "an override keeps it on");
         assert_eq!(config.password.as_deref(), Some("secret"));
+    }
+
+    /// Only what an override names changes, even when it names a default value.
+    #[test]
+    fn overrides_keep_what_they_leave_out() {
+        let mut config = NaoqiRobotConfig {
+            sensor_period_ms: 100,
+            disable_autonomous_life: false,
+            sensors: SensorsConfig {
+                sonar: false,
+                touch: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        config.apply_overrides(serde_json::from_str(r#"{"password": "secret"}"#).unwrap());
+        assert!(!config.sensors.sonar && !config.sensors.touch);
+        assert_eq!(config.sensor_period_ms, 100);
+        config.apply_overrides(
+            serde_json::from_str(
+                r#"{"sensor_period_ms": 50, "disable_autonomous_life": true,
+                    "sensors": {"touch": true}}"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(config.sensor_period_ms, 50);
+        assert!(config.disable_autonomous_life);
+        assert!(config.sensors.touch, "the named family is switched");
+        assert!(!config.sensors.sonar, "the others are kept");
     }
 
     #[test]

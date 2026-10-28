@@ -22,7 +22,9 @@ const JOINT_SENSORS: &[(&str, &str)] = &[
 ];
 
 impl JointTable {
-    pub(crate) fn new(names: Vec<String>, mapping: &JointIdMapping) -> Self {
+    /// The robot's joints under the mapping. Two joints that end up with the same id are
+    /// refused: each id must name one motor, for its sensor keys and its targets alike.
+    pub(crate) fn new(names: Vec<String>, mapping: &JointIdMapping) -> Result<Self, String> {
         let (names, ids): (Vec<String>, Vec<String>) = names
             .into_iter()
             .filter_map(|name| {
@@ -37,12 +39,16 @@ impl JointTable {
                 Some((name, id))
             })
             .unzip();
-        let by_id = ids
-            .iter()
-            .enumerate()
-            .map(|(index, id)| (id.clone(), index))
-            .collect();
-        Self { names, ids, by_id }
+        let mut by_id = HashMap::new();
+        for (index, id) in ids.iter().enumerate() {
+            if let Some(other) = by_id.insert(id.clone(), index) {
+                return Err(format!(
+                    "the joints {} and {} both map to the id {id}",
+                    names[other], names[index]
+                ));
+            }
+        }
+        Ok(Self { names, ids, by_id })
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -89,7 +95,8 @@ mod tests {
             &JointIdMapping::Extend {
                 ids: HashMap::from([("HeadYaw".to_string(), "neck".to_string())]),
             },
-        );
+        )
+        .expect("distinct ids");
         assert_eq!(table.len(), 2);
         assert_eq!(table.ids(), ["neck", "l_shoulder_pitch"]);
         assert_eq!(table.naoqi_name("neck"), Some("HeadYaw"));
@@ -113,7 +120,20 @@ mod tests {
             &JointIdMapping::Override {
                 ids: HashMap::from([("HeadPitch".to_string(), "nod".to_string())]),
             },
-        );
+        )
+        .expect("distinct ids");
         assert_eq!(table.ids(), ["nod"]);
+    }
+
+    #[test]
+    fn colliding_ids_are_refused() {
+        let error = JointTable::new(
+            vec!["HeadYaw".into(), "HeadPitch".into()],
+            &JointIdMapping::Extend {
+                ids: HashMap::from([("HeadYaw".to_string(), "head_pitch".to_string())]),
+            },
+        )
+        .expect_err("HeadYaw extended to HeadPitch's default id collides");
+        assert!(error.contains("head_pitch"), "{error}");
     }
 }

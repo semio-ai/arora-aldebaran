@@ -47,8 +47,9 @@ qi = { package = "libqi-vibe", version = "1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-# rt, time, sync: the sensor sampling and queued-write tasks run on the caller's runtime.
-tokio = { version = "1", features = ["rt", "time", "sync"] }
+# rt, time, sync, macros: the sensor sampling, queued-write and voice tasks run on the
+# caller's runtime.
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 
 [dev-dependencies]
 # The device test: the default tree on the Arora runtime, without the Studio connection.

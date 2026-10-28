@@ -14,7 +14,9 @@
 //! mapping, sampling period); `configs/nao.json` is a sample.
 
 mod config;
-pub use config::{JointIdMapping, NaoqiRobotConfig, SensorsConfig};
+pub use config::{
+    JointIdMapping, NaoqiRobotConfig, NaoqiRobotConfigOverrides, SensorsConfig, SensorsOverrides,
+};
 
 mod conversions;
 pub use conversions::keys;

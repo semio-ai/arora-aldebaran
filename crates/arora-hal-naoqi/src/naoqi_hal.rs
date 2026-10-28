@@ -6,7 +6,8 @@ use arora_hal::{Hal, HalDescription, HalResult, UpdatesStream};
 use arora_types::data::{Key, State, StateChange};
 use arora_types::value::Value;
 use async_trait::async_trait;
-use futures::channel::mpsc::UnboundedSender;
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::{debug, info, warn};
 use qi::value::{Dynamic, KeyDynValueMap, Value as QiValue};
@@ -18,6 +19,9 @@ use crate::conversions::{arora_f64, identity, keys, qi_f64, qi_list, JointTable}
 use crate::naoqi_error::NaoqiRobotError;
 
 type Node = qi::node::Node<qi::service_directory::Client>;
+
+/// How long dropping the HAL waits for the robot to stop moving.
+const STOP_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// A NAOqi robot (NAO, Pepper) as an [`arora_hal::Hal`], driven through the `qi` framework.
 ///
@@ -32,10 +36,12 @@ type Node = qi::node::Node<qi::service_directory::Client>;
 /// [`voice`](NaoqiHal::voice) speaks the behavior tree's `Say` leaves ([`crate::say`]).
 pub struct NaoqiHal {
     inner: Arc<Inner>,
-    /// Feeds the queued-write task; dropping it (with the HAL) closes the channel, and the
-    /// task ends once the remaining backlog is flushed.
+    /// Feeds the queued-write task.
     outbound: UnboundedSender<StateChange>,
-    /// The sampling and event tasks, aborted with the HAL.
+    /// Feeds the voice's task, which says and stops in the order asked.
+    speech: UnboundedSender<Speech>,
+    /// The sampling, event and queued-write tasks, aborted with the HAL: a command still
+    /// queued when the HAL goes is not sent.
     tasks: Vec<AbortHandle>,
     /// The runtime the HAL's tasks run on, where its voice speaks.
     runtime: tokio::runtime::Handle,
@@ -57,6 +63,9 @@ struct Inner {
     subscribers: Mutex<Vec<UnboundedSender<StateChange>>>,
     /// The last base velocity command `(x, y, theta)`, merged across its keys.
     base_velocity: Mutex<[f64; 3]>,
+    /// Held through a write, from its cached state to its last NAOqi call, so that
+    /// overlapping writes reach the robot in the order they update the cache.
+    write_order: tokio::sync::Mutex<()>,
 }
 
 /// What the sensor sampling keeps between two samples: the previous joint positions, to
@@ -143,7 +152,7 @@ impl NaoqiHal {
             .map_err(|error| {
                 NaoqiRobotError::Connection(format!("cannot list the joints: {error}"))
             })?;
-        let joints = JointTable::new(names, &config.joint_ids);
+        let joints = JointTable::new(names, &config.joint_ids).map_err(NaoqiRobotError::Config)?;
         let unknown = || "unknown".to_string();
         info!(
             "Connected to NAOqi at {}: {} robot, hardware {}, NAOqi {}, {} joints",
@@ -166,6 +175,7 @@ impl NaoqiHal {
             current_state: Mutex::new(State::new()),
             subscribers: Mutex::new(Vec::new()),
             base_velocity: Mutex::new([0.0; 3]),
+            write_order: tokio::sync::Mutex::new(()),
         });
 
         // A first sample, so that the first `updates()` subscribers get a snapshot.
@@ -200,24 +210,30 @@ impl NaoqiHal {
         }
         // The queued-write task: receives the changes `try_send` enqueues, folds any backlog
         // into one change (per-key newest wins) so slow round-trips coalesce, and drives the
-        // same write path as `write()`. It ends when the channel closes, i.e. when the HAL is
-        // dropped.
+        // same write path as `write()`. It is aborted with the HAL.
         let (outbound, mut outbound_rx) = futures::channel::mpsc::unbounded::<StateChange>();
         let writer = Arc::clone(&inner);
-        tokio::spawn(async move {
-            while let Some(mut changes) = outbound_rx.next().await {
-                while let Ok(later) = outbound_rx.try_recv() {
-                    fold_newest_wins(&mut changes, later);
+        tasks.push(
+            tokio::spawn(async move {
+                while let Some(mut changes) = outbound_rx.next().await {
+                    while let Ok(later) = outbound_rx.try_recv() {
+                        fold_newest_wins(&mut changes, later);
+                    }
+                    if let Err(error) = writer.write(changes).await {
+                        warn!("Queued write failed: {error}");
+                    }
                 }
-                if let Err(error) = writer.write(changes).await {
-                    warn!("Queued write failed: {error}");
-                }
-            }
-        });
+            })
+            .abort_handle(),
+        );
+        // The voice's task; it ends once every voice handed out is gone.
+        let (speech, speech_rx) = futures::channel::mpsc::unbounded();
+        tokio::spawn(speak(inner.tts.clone(), speech_rx));
 
         Ok(Self {
             inner,
             outbound,
+            speech,
             tasks,
             runtime: tokio::runtime::Handle::current(),
         })
@@ -227,50 +243,105 @@ impl NaoqiHal {
     /// [`say::install`](crate::say::install).
     pub fn voice(&self) -> Voice {
         Voice {
-            tts: self.inner.tts.clone(),
+            speech: self.speech.clone(),
             runtime: self.runtime.clone(),
         }
     }
 }
 
 /// A NAOqi robot's voice: says a sentence without waiting for it, stops what it says.
+///
+/// Sentences and stops reach `ALTextToSpeech` in the order they are asked: a stop never
+/// overtakes the sentence before it, and a sentence is sent once the stop before it is done.
 #[derive(Clone)]
 pub struct Voice {
-    tts: AnyObject,
+    speech: UnboundedSender<Speech>,
     runtime: tokio::runtime::Handle,
+}
+
+/// What the voice's task is asked.
+enum Speech {
+    Say(String, Utterance),
+    Stop,
 }
 
 impl Voice {
     /// Start saying `text`; the returned utterance tells when it has been said.
     pub(crate) fn say(&self, text: String) -> Utterance {
         let utterance = Utterance::default();
-        let done = utterance.clone();
-        let tts = self.tts.clone();
-        self.runtime.spawn(async move {
-            // `say` returns once the sentence is spoken, or stopped.
-            let said = match tts.call::<(), _, _>("say", text.clone()).await {
-                Ok(()) => {
-                    debug!("Said \"{text}\"");
-                    true
-                }
-                Err(error) => {
-                    warn!("ALTextToSpeech.say(\"{text}\") failed: {error}");
-                    false
-                }
-            };
-            *lock(&done.0) = Some(said);
-        });
+        if self
+            .speech
+            .unbounded_send(Speech::Say(text, utterance.clone()))
+            .is_err()
+        {
+            warn!("ALTextToSpeech is gone, a sentence is not said");
+            *lock(&utterance.0) = Some(false);
+        }
         utterance
     }
 
     /// Stop what the robot is saying.
     pub(crate) fn stop(&self) {
-        let tts = self.tts.clone();
-        self.runtime.spawn(async move {
-            if let Err(error) = tts.call::<(), _, _>("stopAll", ()).await {
-                warn!("ALTextToSpeech.stopAll failed: {error}");
+        let _ = self.speech.unbounded_send(Speech::Stop);
+    }
+
+    /// The runtime the voice speaks on.
+    pub(crate) fn runtime(&self) -> &tokio::runtime::Handle {
+        &self.runtime
+    }
+}
+
+/// The voice's task: sends the sentences and stops in order. A sentence is polled until it
+/// waits on the robot, so its request is queued before any later one; a stop is awaited
+/// before the next command, while the sentences under way go on.
+async fn speak(tts: AnyObject, mut commands: UnboundedReceiver<Speech>) {
+    let mut under_way = FuturesUnordered::new();
+    loop {
+        tokio::select! {
+            biased;
+            Some(()) = under_way.next(), if !under_way.is_empty() => {}
+            command = commands.next() => match command {
+                None => break,
+                Some(Speech::Say(text, utterance)) => {
+                    under_way.push(say(tts.clone(), text, utterance));
+                    while let std::task::Poll::Ready(Some(())) =
+                        futures::poll!(under_way.next())
+                    {}
+                }
+                Some(Speech::Stop) => {
+                    let mut stop = std::pin::pin!(stop_all(tts.clone()));
+                    loop {
+                        tokio::select! {
+                            biased;
+                            () = &mut stop => break,
+                            Some(()) = under_way.next(), if !under_way.is_empty() => {}
+                        }
+                    }
+                }
             }
-        });
+        }
+    }
+    while under_way.next().await.is_some() {}
+}
+
+/// Says `text`; `ALTextToSpeech.say` returns once the sentence is spoken, or stopped.
+async fn say(tts: AnyObject, text: String, utterance: Utterance) {
+    let said = match tts.call::<(), _, _>("say", text.clone()).await {
+        Ok(()) => {
+            debug!("Said \"{text}\"");
+            true
+        }
+        Err(error) => {
+            warn!("ALTextToSpeech.say(\"{text}\") failed: {error}");
+            false
+        }
+    };
+    *lock(&utterance.0) = Some(said);
+}
+
+async fn stop_all(tts: AnyObject) {
+    if let Err(error) = tts.call::<(), _, _>("stopAll", ()).await {
+        warn!("ALTextToSpeech.stopAll failed: {error}");
     }
 }
 
@@ -473,16 +544,9 @@ impl Inner {
     }
 
     /// Drives a boolean key from an `ALMemory` event: its current value, then every raise.
+    /// The raises are subscribed to before the current value is read, so none is lost in
+    /// between; those raised meanwhile wait in the stream and are applied after it.
     async fn watch_event(self: Arc<Self>, event: &'static str, key: &'static str) {
-        if let Ok(Dynamic(value)) = self
-            .memory
-            .call::<Dynamic<QiValue<'static>>, _, _>("getData", event.to_string())
-            .await
-        {
-            if let Some(number) = qi_f64(&value) {
-                self.publish(StateChange::set(key, Value::Boolean(number != 0.0)));
-            }
-        }
         let subscriber: AnyObject = match self.memory.call("subscriber", event.to_string()).await {
             Ok(subscriber) => subscriber,
             Err(error) => {
@@ -500,6 +564,15 @@ impl Inner {
                 return;
             }
         };
+        if let Ok(Dynamic(value)) = self
+            .memory
+            .call::<Dynamic<QiValue<'static>>, _, _>("getData", event.to_string())
+            .await
+        {
+            if let Some(number) = qi_f64(&value) {
+                self.publish(StateChange::set(key, Value::Boolean(number != 0.0)));
+            }
+        }
         while let Some(Dynamic(value)) = raises.next().await {
             if let Some(number) = qi_f64(&value) {
                 self.publish(StateChange::set(key, Value::Boolean(number != 0.0)));
@@ -509,22 +582,21 @@ impl Inner {
     }
 
     /// Applies a change to the current state and notifies subscribers of what actually
-    /// changed.
+    /// changed. The state stays locked until they are notified, so that a feed registering
+    /// meanwhile gets either the change in its snapshot or the change as a delta, in order.
     fn publish(&self, change: StateChange) {
         let mut delta = StateChange::new();
-        {
-            let mut state = lock(&self.current_state);
-            for (key, value) in change.set {
-                if state.get(&key) != Some(&value) {
-                    state.set(key.clone(), value.clone());
-                    delta.set.insert(key, value);
-                }
+        let mut state = lock(&self.current_state);
+        for (key, value) in change.set {
+            if state.get(&key) != Some(&value) {
+                state.set(key.clone(), value.clone());
+                delta.set.insert(key, value);
             }
-            for key in change.unset {
-                if state.get(&key).is_some() {
-                    state.unset(&key);
-                    delta.unset.insert(key);
-                }
+        }
+        for key in change.unset {
+            if state.get(&key).is_some() {
+                state.unset(&key);
+                delta.unset.insert(key);
             }
         }
         if delta.is_empty() {
@@ -537,6 +609,7 @@ impl Inner {
     /// there was nothing to command (partial failures are logged), and `Err` when every
     /// command failed.
     async fn write(self: &Arc<Self>, changes: StateChange) -> Result<(), NaoqiRobotError> {
+        let _order = self.write_order.lock().await;
         let mut joint_targets: Vec<(String, f32)> = Vec::new();
         let mut stiffness_targets: Vec<(String, f32)> = Vec::new();
         let mut led_colors: Vec<(String, i32)> = Vec::new();
@@ -702,22 +775,61 @@ impl Hal for NaoqiHal {
     /// as one `StateChange` (when non-empty), then every subsequent change.
     fn updates(&self) -> UpdatesStream {
         let (tx, rx) = futures::channel::mpsc::unbounded();
-        let snapshot = lock(&self.inner.current_state).clone();
-        if !snapshot.is_empty() {
+        // Registered under the state's lock, as `publish` notifies: no change falls between
+        // the snapshot and the feed's first delta.
+        let state = lock(&self.inner.current_state);
+        if !state.is_empty() {
             let _ = tx.unbounded_send(StateChange {
-                set: snapshot.storage,
+                set: state.storage.clone(),
                 unset: Default::default(),
             });
         }
         lock(&self.inner.subscribers).push(tx);
+        drop(state);
         Box::pin(rx)
     }
 }
 
+/// Dropping the HAL stops its tasks, then the robot's base: a velocity command persists in
+/// NAOqi, so a robot left moving would keep moving without its controller. Within a
+/// multi-threaded runtime the drop waits for the stop, up to [`STOP_TIMEOUT`]; elsewhere the
+/// stop is sent from a task of the HAL's runtime.
 impl Drop for NaoqiHal {
     fn drop(&mut self) {
         for task in &self.tasks {
             task.abort();
+        }
+        if lock(&self.inner.base_velocity)
+            .iter()
+            .all(|&component| component == 0.0)
+        {
+            return;
+        }
+        let inner = Arc::clone(&self.inner);
+        let stop = async move {
+            let stopped = tokio::time::timeout(STOP_TIMEOUT, async {
+                // After any write under way, which an aborted task gives up.
+                let _order = inner.write_order.lock().await;
+                *lock(&inner.base_velocity) = [0.0; 3];
+                inner
+                    .motion
+                    .call::<(), _, _>("moveToward", (0.0f32, 0.0f32, 0.0f32))
+                    .await
+            })
+            .await;
+            match stopped {
+                Ok(Ok(())) => info!("The robot's base is stopped"),
+                Ok(Err(error)) => warn!("Cannot stop the robot's base: {error}"),
+                Err(_) => warn!("Cannot stop the robot's base: NAOqi did not answer in time"),
+            }
+        };
+        let multi_threaded = tokio::runtime::Handle::try_current().is_ok_and(|current| {
+            current.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+        });
+        if multi_threaded {
+            tokio::task::block_in_place(|| self.runtime.block_on(stop));
+        } else {
+            self.runtime.spawn(stop);
         }
     }
 }

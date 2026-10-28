@@ -26,7 +26,7 @@ fn request(store: &SimpleDataStore) -> Option<Value> {
 }
 
 /// The default tree says "Arora is ready" while the hands play their gesture, then hands
-/// the request back; requested again, it plays again.
+/// the request back; requested again, after a pause or at once, it plays again.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_ready_tree_speaks_moves_the_hands_and_plays_again_on_request() {
     let robot = FakeNaoqi::start().await;
@@ -119,4 +119,9 @@ async fn the_ready_tree_speaks_moves_the_hands_and_plays_again_on_request() {
     store.write(ready()).unwrap();
     play(&mut device);
     assert_eq!(robot.said.lock().unwrap().len(), 2);
+
+    // Requested again at once: the episode ended, so it speaks anew.
+    store.write(ready()).unwrap();
+    play(&mut device);
+    assert_eq!(robot.said.lock().unwrap().len(), 3);
 }

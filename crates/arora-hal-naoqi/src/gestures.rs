@@ -4,7 +4,8 @@
 //! has played and for as long as it keeps being ticked, so it pairs with a sentence in a
 //! `Parallel`. Its clock is the tree's (`dt_ns`, bound to `arora/dt`); a gesture whose
 //! leaf goes [`IDLE_RESTART`] unticked was halted, and plays from its start when ticked
-//! again.
+//! again. `EndGestures` ends an episode at once, so a gesture asked again right after it
+//! played plays anew.
 //!
 //! Each joint a gesture moves is two out-parameters, bound to the joint's
 //! `target_position` and `target_stiffness` keys: NAOqi moves no joint whose stiffness is
@@ -78,6 +79,14 @@ pub mod naoqi_gestures {
         } else {
             Status::Success
         }
+    }
+
+    /// End the gesture episode: the next `HandsReady` plays from its start, even right
+    /// after one has played. Always `Success`.
+    #[export(id = "638756b0-7826-4a3f-872e-e18deb92a178")]
+    pub fn end_gestures() -> Status {
+        *lock(&HANDS_READY) = GestureClock::default();
+        Status::Success
     }
 }
 

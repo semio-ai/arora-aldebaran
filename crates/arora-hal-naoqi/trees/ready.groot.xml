@@ -8,8 +8,10 @@
        bridge client writes a new one.
 
        Say is wrapped in a Fallback with Succeed: a voice that cannot speak
-       leaves the gesture to play out. Leaves: the native IsStringSet and
-       UnsetString, Say (naoqi-say), HandsReady (naoqi-gestures). -->
+       leaves the gesture to play out. EndSpeech and EndGestures close the
+       episode, so a request arriving right after is played anew. Leaves: the
+       native IsStringSet and UnsetString, Say and EndSpeech (naoqi-say),
+       HandsReady and EndGestures (naoqi-gestures). -->
   <BehaviorTree ID="MainTree">
     <Fallback>
       <Sequence>
@@ -29,6 +31,8 @@
             <Succeed />
           </Fallback>
         </Parallel>
+        <EndSpeech />
+        <EndGestures />
         <UnsetString variable="{command.ready}" />
       </Sequence>
       <Succeed />

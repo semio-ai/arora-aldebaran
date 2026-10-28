@@ -6,11 +6,36 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `EndSpeech` (`naoqi-say`) and `EndGestures` (`naoqi-gestures`): leaves that end an
+  episode, so the same sentence or gesture asked again right after plays anew. The default
+  tree calls them before handing the request back.
+- `NaoqiRobotConfigOverrides` and `SensorsOverrides`, what `apply_overrides` takes.
+
 ### Changed
 
+- **Breaking:** `NaoqiRobotConfig::apply_overrides` takes a `NaoqiRobotConfigOverrides`.
+  An override replaces exactly the fields it sets, even with their default value, and
+  keeps the others: a credentials-only override no longer re-enables disabled sensors, and
+  `"sensors"` switches only the families it names.
+- Dropping the HAL drops the commands still queued and stops a moving base
+  (`ALMotion.moveToward(0, 0, 0)`).
 - The crate moved from `semio-ai/arora-sdk` to its own repository,
   `semio-ai/arora-aldebaran`. It now depends on the published Arora crates
   rather than on their workspace paths.
+
+### Fixed
+
+- Two joints mapped to the same id are refused at connection, rather than one silently
+  shadowing the other.
+- Overlapping writes reach the robot in the order they update the cached state, so an
+  older base velocity no longer overwrites a newer one.
+- A stop no longer overtakes the sentence before it, and a new sentence is sent only
+  once the stop before it is done.
+- A sentence whose `Say` is halted stops even when the tree ticks no `Say` any more.
+- A touch raised while the HAL subscribes is no longer lost, and a feed registering while
+  a change is published no longer misses it.
 
 ## [0.2.0] - 2026-10-19
 
