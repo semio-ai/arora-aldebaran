@@ -17,9 +17,9 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  # The library alone, then with the `arora-naoqi` runner (feature `runner`,
-  # which also turns on the Semio Studio connection): its tests, the device
-  # test against a fake NAOqi among them, run in both.
+  # The library alone, then with the `arora-naoqi` runner (feature `runner`),
+  # then the runner with its Semio Studio connection (feature `studio`): the
+  # tests, the device tests against a fake NAOqi among them, run in each.
   test:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -39,6 +39,9 @@ jobs:
       - name: Clippy (runner)
         run: cargo clippy --all-targets --features runner -- -D warnings
 
+      - name: Clippy (runner, studio)
+        run: cargo clippy --all-targets --features runner,studio -- -D warnings
+
       - name: Check formatting
         run: cargo fmt --check
 
@@ -47,6 +50,9 @@ jobs:
 
       - name: Test (runner)
         run: cargo test --features runner
+
+      - name: Test (runner, studio)
+        run: cargo test --features runner,studio --bins
 
   # The NAO cross-build of `arora-naoqi` is not exercised here; it depends on a
   # Homebrew formula not available on the CI image. See
