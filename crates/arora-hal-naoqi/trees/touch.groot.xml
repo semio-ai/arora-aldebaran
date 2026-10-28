@@ -1,0 +1,74 @@
+<root main_tree_to_execute="MainTree">
+  <!-- A tree to try a robot with: it plays the default behavior on request, as
+       ready.groot.xml does, and greets whoever touches the front of its head.
+
+       A touch of the front of the head (touch.head.front true) starts a
+       greeting: the robot says "Hello, you touched my head" as its hands play
+       the ready gesture. The greeting is a SequenceStar, so it plays to its end
+       once started, the touch released or not, relaxing the hands; EndSpeech
+       and EndGestures then close the episode. One touch greets once: the
+       greeting takes touch_tree.armed as it starts, and only a release sets it
+       again, so a head held past the greeting does not greet again (and a
+       head touched as the device starts greets once released). That
+       re-arming branch comes after the greeting in the Fallback, so that a
+       release does not cut a greeting under way. Give the runner this file
+       with its tree option.
+
+       It names the keys of the Arora robot standard only (touch.head.front,
+       the joints' target_position and target_stiffness), so it runs on any
+       HAL that maps them. Leaves: the native IsStringSet, UnsetString and
+       Equal, Say and EndSpeech (naoqi-say), HandsReady and EndGestures
+       (naoqi-gestures). -->
+  <BehaviorTree ID="MainTree">
+    <Fallback>
+      <Sequence>
+        <IsStringSet value="{command.ready}" />
+        <Parallel>
+          <HandsReady dt_ns="{arora/dt}"
+                      l_wrist_yaw="{l_wrist_yaw.target_position}"
+                      r_wrist_yaw="{r_wrist_yaw.target_position}"
+                      l_hand="{l_hand.target_position}"
+                      r_hand="{r_hand.target_position}"
+                      l_wrist_yaw_stiffness="{l_wrist_yaw.target_stiffness}"
+                      r_wrist_yaw_stiffness="{r_wrist_yaw.target_stiffness}"
+                      l_hand_stiffness="{l_hand.target_stiffness}"
+                      r_hand_stiffness="{r_hand.target_stiffness}" />
+          <Fallback>
+            <Say text="Arora is ready" voice="" viseme="{speech.viseme}" />
+            <Succeed />
+          </Fallback>
+        </Parallel>
+        <EndSpeech />
+        <EndGestures />
+        <UnsetString variable="{command.ready}" />
+      </Sequence>
+      <SequenceStar>
+        <Equal a="{touch.head.front}" b='json:{"bool":true}' />
+        <IsStringSet value="{touch_tree.armed}" />
+        <UnsetString variable="{touch_tree.armed}" />
+        <Parallel>
+          <HandsReady dt_ns="{arora/dt}"
+                      l_wrist_yaw="{l_wrist_yaw.target_position}"
+                      r_wrist_yaw="{r_wrist_yaw.target_position}"
+                      l_hand="{l_hand.target_position}"
+                      r_hand="{r_hand.target_position}"
+                      l_wrist_yaw_stiffness="{l_wrist_yaw.target_stiffness}"
+                      r_wrist_yaw_stiffness="{r_wrist_yaw.target_stiffness}"
+                      l_hand_stiffness="{l_hand.target_stiffness}"
+                      r_hand_stiffness="{r_hand.target_stiffness}" />
+          <Fallback>
+            <Say text="Hello, you touched my head" voice="" viseme="{speech.viseme}" />
+            <Succeed />
+          </Fallback>
+        </Parallel>
+        <EndSpeech />
+        <EndGestures />
+      </SequenceStar>
+      <Sequence>
+        <Equal a="{touch.head.front}" b='json:{"bool":false}' />
+        <SetString variable="{touch_tree.armed}" value="armed" />
+      </Sequence>
+      <Succeed />
+    </Fallback>
+  </BehaviorTree>
+</root>

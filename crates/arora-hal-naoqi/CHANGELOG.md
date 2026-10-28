@@ -18,6 +18,16 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ### Changed
 
+- **Breaking:** arora 16. Building with Semio Studio is the opt-in: `runner` no longer
+  enables `studio`, and a runner built with `--features runner,studio` connects to Studio
+  on every run unless it passes `--no-studio`, enrolling a device that is not enrolled
+  first (by a code entered in Studio, or `STUDIO_ENROLLMENT_TOKEN`). `--studio` and
+  `ARORA_STUDIO` are gone; to migrate, drop them, and build with `studio` a runner that
+  should connect.
+- The runner takes `--device <NAME>`, `--device-dir <PATH>` and `--bridge-port <PORT>`
+  (`ARORA_DEVICE`, `ARORA_DEVICE_DIR`, `ARORA_BRIDGE_PORT`): the device the run is, so
+  several run on one machine. A device's Studio credential is kept under its name in
+  Semio's device store.
 - **Breaking:** `NaoqiRobotConfig::apply_overrides` takes a `NaoqiRobotConfigOverrides`.
   An override replaces exactly the fields it sets, even with their default value, and
   keeps the others: a credentials-only override no longer re-enables disabled sensors, and
