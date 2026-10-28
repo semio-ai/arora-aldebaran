@@ -1,0 +1,5 @@
+# The same nightly as arora-sdk, whose published crates this workspace builds
+# against.
+[toolchain]
+channel = "nightly-2026-06-03"
+components = ["rustfmt", "clippy"]

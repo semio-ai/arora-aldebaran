@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+
+members = [
+  "crates/arora-hal-naoqi",
+]
+
+[profile.release]
+lto = "thin"
+debug = 1

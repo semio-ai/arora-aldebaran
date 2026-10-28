@@ -1,0 +1,62 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Line tables are enough for a failing test's backtrace, and keep the linked
+  # runtimes within the runner's disk.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  # The library alone, then with the `arora-naoqi` runner (feature `runner`,
+  # which also turns on the Semio Studio connection): its tests, the device
+  # test against a fake NAOqi among them, run in both.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+
+      # Dependencies only: workspace members always rebuild. Main saves the
+      # cache, pull requests restore it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Clippy (runner)
+        run: cargo clippy --all-targets --features runner -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Test
+        run: cargo test
+
+      - name: Test (runner)
+        run: cargo test --features runner
+
+  # The NAO cross-build of `arora-naoqi` is not exercised here; it depends on a
+  # Homebrew formula not available on the CI image. See
+  # crates/arora-hal-naoqi/readme.md#deploy-it-on-the-robot.
+
+  markdown-link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the links in every Markdown file
+        run: |
+          npm install --global markdown-link-check@3.13.7
+          failed=0
+          while IFS= read -r -d '' file; do
+            markdown-link-check --quiet \
+              --config .github/workflows/markdown-link-check-config.json "$file" || failed=1
+          done < <(find . -type f -name '*.md' -not -path './node_modules/*' -print0)
+          exit "$failed"
