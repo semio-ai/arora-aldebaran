@@ -19,16 +19,19 @@ All notable changes to `arora-hal-naoqi`. The format follows
   An override replaces exactly the fields it sets, even with their default value, and
   keeps the others: a credentials-only override no longer re-enables disabled sensors, and
   `"sensors"` switches only the families it names.
-- Dropping the HAL drops the commands still queued and stops a moving base
-  (`ALMotion.moveToward(0, 0, 0)`).
+- Dropping the HAL drops the commands still queued and stops a base that may be moving
+  (`ALMotion.moveToward(0, 0, 0)`), including after a stop that failed or was cut short.
+- With sonar sensing on, the HAL subscribes to `ALSonar` (which turns the sonars on) and
+  unsubscribes when it goes.
 - The crate moved from `semio-ai/arora-sdk` to its own repository,
   `semio-ai/arora-aldebaran`. It now depends on the published Arora crates
   rather than on their workspace paths.
 
 ### Fixed
 
-- Two joints mapped to the same id are refused at connection, rather than one silently
-  shadowing the other.
+- Two joints mapped to the same id, an empty id and an id with a `.` are refused at
+  connection, rather than one joint silently shadowing another or a joint left
+  uncommandable.
 - Overlapping writes reach the robot in the order they update the cached state, so an
   older base velocity no longer overwrites a newer one.
 - A stop no longer overtakes the sentence before it, and a new sentence is sent only

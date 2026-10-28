@@ -2,7 +2,9 @@
 //! in-process with `qi`, with hooks to inspect the commands received and to drive sensors.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use qi::dynamic::ObjectBuilder;
 use qi::node::Node;
@@ -38,6 +40,12 @@ pub struct FakeNaoqi {
     pub set_stiffnesses: StiffnessCommands,
     pub leds: Arc<Mutex<Vec<(String, i32, f32)>>>,
     pub move_toward: Arc<Mutex<Vec<(f32, f32, f32)>>>,
+    /// When set, `moveToward` fails without moving.
+    pub move_toward_fails: Arc<AtomicBool>,
+    /// How long `setAngles` takes.
+    pub set_angles_delay: Arc<Mutex<Duration>>,
+    /// The names subscribed to `ALSonar`; the sonars are read only while one is.
+    pub sonar_subscribers: Arc<Mutex<Vec<String>>>,
     /// The Autonomous Life state, `solitary` until set.
     pub life_state: Arc<Mutex<String>>,
 }
@@ -85,10 +93,6 @@ fn initial_memory() -> HashMap<String, Value<'static>> {
         "Device/SubDeviceList/InertialSensor/AngleX/Sensor/Value",
         Value::Float32(0.01.into()),
     );
-    set(
-        "Device/SubDeviceList/US/Left/Sensor/Value",
-        Value::Float32(1.5.into()),
-    );
     // Touch events are memory keys too.
     set("FrontTactilTouched", Value::Float32(0.0.into()));
     memory
@@ -104,6 +108,9 @@ impl FakeNaoqi {
         let set_stiffnesses = Arc::new(Mutex::new(Vec::new()));
         let leds = Arc::new(Mutex::new(Vec::new()));
         let move_toward = Arc::new(Mutex::new(Vec::new()));
+        let move_toward_fails = Arc::new(AtomicBool::new(false));
+        let set_angles_delay = Arc::new(Mutex::new(Duration::ZERO));
+        let sonar_subscribers = Arc::new(Mutex::new(Vec::new()));
         let life_state = Arc::new(Mutex::new("solitary".to_string()));
 
         let mut init = qi::node::init();
@@ -115,7 +122,13 @@ impl FakeNaoqi {
                 set_angles.clone(),
                 set_stiffnesses.clone(),
                 move_toward.clone(),
+                move_toward_fails.clone(),
+                set_angles_delay.clone(),
             ),
+        );
+        init.add_service_object(
+            "ALSonar",
+            alsonar(memory.clone(), sonar_subscribers.clone()),
         );
         init.add_service_object("ALTextToSpeech", altexttospeech(said.clone()));
         init.add_service_object("ALLeds", alleds(leds.clone()));
@@ -146,6 +159,9 @@ impl FakeNaoqi {
             set_stiffnesses,
             leds,
             move_toward,
+            move_toward_fails,
+            set_angles_delay,
+            sonar_subscribers,
             life_state,
         }
     }
@@ -233,6 +249,8 @@ fn almotion(
     set_angles: AngleCommands,
     set_stiffnesses: StiffnessCommands,
     move_toward: Arc<Mutex<Vec<(f32, f32, f32)>>>,
+    move_toward_fails: Arc<AtomicBool>,
+    set_angles_delay: Arc<Mutex<Duration>>,
 ) -> AnyObject {
     let mut builder = ObjectBuilder::new();
     builder.add_method("getBodyNames", |_chain: String| async move {
@@ -271,8 +289,10 @@ fn almotion(
         move |(names, angles, speed): (Dynamic<Vec<String>>, Dynamic<Vec<f32>>, f32)| {
             let memory = memory.clone();
             let set_angles = set_angles.clone();
+            let delay = *lock(&set_angles_delay);
             async move {
-                // The fake reaches its targets instantly.
+                tokio::time::sleep(delay).await;
+                // The fake reaches its targets at once.
                 let mut memory = lock(&memory);
                 for (name, angle) in names.0.iter().zip(&angles.0) {
                     memory.insert(
@@ -297,8 +317,38 @@ fn almotion(
     );
     builder.add_method("moveToward", move |(x, y, theta): (f32, f32, f32)| {
         let move_toward = move_toward.clone();
+        let fails = move_toward_fails.load(Ordering::SeqCst);
         async move {
+            if fails {
+                return Err(Error::Other("ALMotion::moveToward: refused".into()));
+            }
             lock(&move_toward).push((x, y, theta));
+            Ok(())
+        }
+    });
+    AnyObject::new(builder.build())
+}
+
+/// The sonars measure only while someone is subscribed to `ALSonar`.
+fn alsonar(memory: Memory, subscribers: Arc<Mutex<Vec<String>>>) -> AnyObject {
+    let mut builder = ObjectBuilder::new();
+    let subscribe_to = subscribers.clone();
+    builder.add_method("subscribe", move |name: String| {
+        let memory = memory.clone();
+        let subscribers = subscribe_to.clone();
+        async move {
+            lock(&subscribers).push(name);
+            lock(&memory).insert(
+                "Device/SubDeviceList/US/Left/Sensor/Value".to_string(),
+                Value::Float32(1.5.into()),
+            );
+            Ok(())
+        }
+    });
+    builder.add_method("unsubscribe", move |name: String| {
+        let subscribers = subscribers.clone();
+        async move {
+            lock(&subscribers).retain(|subscriber| subscriber != &name);
             Ok(())
         }
     });

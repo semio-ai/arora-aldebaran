@@ -50,6 +50,9 @@ Joints are named: the NAOqi joint names in snake case (`HeadYaw` → `head_yaw`,
 model whose joints carry generated ids (a GLB from Studio) maps those ids to these names on
 its side.
 
+An id is a key's entity: the HAL refuses a configuration that maps a joint to an empty id,
+to an id with a `.`, or two joints to the same id.
+
 | Key | Direction | NAOqi source or target |
 |---|---|---|
 | `<joint>.position` (rad), `.velocity` (rad/s, derived), `.stiffness`, `.temperature` (°C), `.current` (A) | sensed | `ALMemory` `Device/SubDeviceList/<Joint>/…` |
@@ -66,9 +69,12 @@ Numeric sensor keys are sampled from `ALMemory` at `sensor_period_ms` (50 ms by 
 in one `getListData` call, and only changed values are reported. Touch keys are driven
 by `ALMemory` events.
 
+The sonars measure only while someone subscribes to `ALSonar`: with sonar sensing on
+(`sensors.sonar`, the default), the HAL does, and unsubscribes when it goes.
+
 Commands reach the robot in the order they are written. When the HAL goes (the runner
-stops), a base left moving is stopped (`ALMotion.moveToward(0, 0, 0)`), and commands still
-queued are not sent.
+stops), a base that may be moving is stopped (`ALMotion.moveToward(0, 0, 0)`), and commands
+still queued are not sent.
 
 The HAL receives and publishes keys; it sets no key meta. Which keys remote writers may
 change is the device's to say, as with the other HALs: the runner opens

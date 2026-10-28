@@ -22,8 +22,9 @@ const JOINT_SENSORS: &[(&str, &str)] = &[
 ];
 
 impl JointTable {
-    /// The robot's joints under the mapping. Two joints that end up with the same id are
-    /// refused: each id must name one motor, for its sensor keys and its targets alike.
+    /// The robot's joints under the mapping. An empty id, an id with a `.` (a key separator),
+    /// and two joints that end up with the same id are refused: each id must name one motor,
+    /// for its sensor keys and its targets alike.
     pub(crate) fn new(names: Vec<String>, mapping: &JointIdMapping) -> Result<Self, String> {
         let (names, ids): (Vec<String>, Vec<String>) = names
             .into_iter()
@@ -41,6 +42,14 @@ impl JointTable {
             .unzip();
         let mut by_id = HashMap::new();
         for (index, id) in ids.iter().enumerate() {
+            // An id is a key's entity: `<id>.target_position` must parse back to it.
+            if id.is_empty() || id.contains('.') {
+                return Err(format!(
+                    "the joint {} maps to the id \"{id}\": a joint id must be non-empty and \
+                     contain no '.'",
+                    names[index]
+                ));
+            }
             if let Some(other) = by_id.insert(id.clone(), index) {
                 return Err(format!(
                     "the joints {} and {} both map to the id {id}",
@@ -135,5 +144,19 @@ mod tests {
         )
         .expect_err("HeadYaw extended to HeadPitch's default id collides");
         assert!(error.contains("head_pitch"), "{error}");
+    }
+
+    #[test]
+    fn ids_that_are_not_an_entity_are_refused() {
+        for id in ["", "neck.yaw"] {
+            let error = JointTable::new(
+                vec!["HeadYaw".into()],
+                &JointIdMapping::Extend {
+                    ids: HashMap::from([("HeadYaw".to_string(), id.to_string())]),
+                },
+            )
+            .expect_err("not a key entity");
+            assert!(error.contains("HeadYaw"), "{error}");
+        }
     }
 }

@@ -20,8 +20,11 @@ use crate::naoqi_error::NaoqiRobotError;
 
 type Node = qi::node::Node<qi::service_directory::Client>;
 
-/// How long dropping the HAL waits for the robot to stop moving.
+/// How long dropping the HAL waits for the robot to stop moving and release its sonars.
 const STOP_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// The name the HAL subscribes to `ALSonar` under.
+const SONAR_SUBSCRIBER: &str = "arora-naoqi";
 
 /// A NAOqi robot (NAO, Pepper) as an [`arora_hal::Hal`], driven through the `qi` framework.
 ///
@@ -55,6 +58,8 @@ struct Inner {
     motion: AnyObject,
     tts: AnyObject,
     leds: Option<AnyObject>,
+    /// `ALSonar`, when the HAL subscribed to it: the sonars measure only while someone is.
+    sonar: Option<AnyObject>,
     joints: JointTable,
     description: HalDescription,
     /// The current state: sampled sensors, received events and cached commands.
@@ -63,6 +68,10 @@ struct Inner {
     subscribers: Mutex<Vec<UnboundedSender<StateChange>>>,
     /// The last base velocity command `(x, y, theta)`, merged across its keys.
     base_velocity: Mutex<[f64; 3]>,
+    /// Whether the base may be moving: set before a non-zero velocity is sent, cleared
+    /// only once a zero velocity is confirmed. The cached velocity may be zero while this
+    /// is set, after a stop that failed or was never sent.
+    base_moving: Mutex<bool>,
     /// Held through a write, from its cached state to its last NAOqi call, so that
     /// overlapping writes reach the robot in the order they update the cache.
     write_order: tokio::sync::Mutex<()>,
@@ -145,6 +154,11 @@ impl NaoqiHal {
         if config.disable_autonomous_life {
             disable_autonomous_life(&node).await;
         }
+        let sonar = if config.sensors.sonar {
+            subscribe_to_sonar(&node).await
+        } else {
+            None
+        };
         let description = describe(&config, &node, &memory, &motion).await;
         let names: Vec<String> = motion
             .call("getBodyNames", "Body".to_string())
@@ -170,11 +184,13 @@ impl NaoqiHal {
             motion,
             tts,
             leds,
+            sonar,
             joints,
             description,
             current_state: Mutex::new(State::new()),
             subscribers: Mutex::new(Vec::new()),
             base_velocity: Mutex::new([0.0; 3]),
+            base_moving: Mutex::new(false),
             write_order: tokio::sync::Mutex::new(()),
         });
 
@@ -386,6 +402,28 @@ async fn disable_autonomous_life(node: &Node) {
     {
         Ok(()) => info!("Autonomous Life turned off (it was {state})"),
         Err(error) => warn!("ALAutonomousLife.setState(\"disabled\") failed: {error}"),
+    }
+}
+
+/// Subscribes to `ALSonar`, which turns the sonars on. A robot without the service, or a
+/// refusal, leaves the sonar keys to whoever else turned them on, warned.
+async fn subscribe_to_sonar(node: &Node) -> Option<AnyObject> {
+    let sonar = match node.service("ALSonar").await {
+        Ok(sonar) => sonar,
+        Err(error) => {
+            warn!("ALSonar is not available, the sonars may not measure: {error}");
+            return None;
+        }
+    };
+    match sonar
+        .call::<(), _, _>("subscribe", SONAR_SUBSCRIBER.to_string())
+        .await
+    {
+        Ok(()) => Some(sonar),
+        Err(error) => {
+            warn!("ALSonar.subscribe failed, the sonars may not measure: {error}");
+            None
+        }
     }
 }
 
@@ -723,12 +761,18 @@ impl Inner {
         }
         if let Some([x, y, theta]) = base_velocity {
             attempted += 1;
-            if let Err(error) = self
+            let stopping = [x, y, theta] == [0.0; 3];
+            if !stopping {
+                *lock(&self.base_moving) = true;
+            }
+            match self
                 .motion
                 .call::<(), _, _>("moveToward", (x as f32, y as f32, theta as f32))
                 .await
             {
-                failures.push(format!("ALMotion.moveToward: {error}"));
+                Ok(()) if stopping => *lock(&self.base_moving) = false,
+                Ok(()) => {}
+                Err(error) => failures.push(format!("ALMotion.moveToward: {error}")),
             }
         }
 
@@ -790,46 +834,59 @@ impl Hal for NaoqiHal {
     }
 }
 
-/// Dropping the HAL stops its tasks, then the robot's base: a velocity command persists in
-/// NAOqi, so a robot left moving would keep moving without its controller. Within a
-/// multi-threaded runtime the drop waits for the stop, up to [`STOP_TIMEOUT`]; elsewhere the
-/// stop is sent from a task of the HAL's runtime.
+/// Dropping the HAL stops its tasks, then the robot's base, and releases the sonars: a
+/// velocity command persists in NAOqi, so a robot left moving would keep moving without its
+/// controller. Within a multi-threaded runtime the drop waits for that, up to
+/// [`STOP_TIMEOUT`]; elsewhere it is done from a task of the HAL's runtime.
 impl Drop for NaoqiHal {
     fn drop(&mut self) {
         for task in &self.tasks {
             task.abort();
         }
-        if lock(&self.inner.base_velocity)
-            .iter()
-            .all(|&component| component == 0.0)
-        {
+        let moving = *lock(&self.inner.base_moving);
+        if !moving && self.inner.sonar.is_none() {
             return;
         }
         let inner = Arc::clone(&self.inner);
-        let stop = async move {
-            let stopped = tokio::time::timeout(STOP_TIMEOUT, async {
-                // After any write under way, which an aborted task gives up.
-                let _order = inner.write_order.lock().await;
-                *lock(&inner.base_velocity) = [0.0; 3];
-                inner
-                    .motion
-                    .call::<(), _, _>("moveToward", (0.0f32, 0.0f32, 0.0f32))
-                    .await
+        let shutdown = async move {
+            let done = tokio::time::timeout(STOP_TIMEOUT, async {
+                if moving {
+                    // After any write under way, which an aborted task gives up.
+                    let _order = inner.write_order.lock().await;
+                    match inner
+                        .motion
+                        .call::<(), _, _>("moveToward", (0.0f32, 0.0f32, 0.0f32))
+                        .await
+                    {
+                        Ok(()) => {
+                            *lock(&inner.base_velocity) = [0.0; 3];
+                            *lock(&inner.base_moving) = false;
+                            info!("The robot's base is stopped");
+                        }
+                        Err(error) => warn!("Cannot stop the robot's base: {error}"),
+                    }
+                }
+                if let Some(sonar) = &inner.sonar {
+                    if let Err(error) = sonar
+                        .call::<(), _, _>("unsubscribe", SONAR_SUBSCRIBER.to_string())
+                        .await
+                    {
+                        warn!("ALSonar.unsubscribe failed: {error}");
+                    }
+                }
             })
             .await;
-            match stopped {
-                Ok(Ok(())) => info!("The robot's base is stopped"),
-                Ok(Err(error)) => warn!("Cannot stop the robot's base: {error}"),
-                Err(_) => warn!("Cannot stop the robot's base: NAOqi did not answer in time"),
+            if done.is_err() {
+                warn!("NAOqi did not answer in time: the base may still move, the sonars measure");
             }
         };
         let multi_threaded = tokio::runtime::Handle::try_current().is_ok_and(|current| {
             current.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
         });
         if multi_threaded {
-            tokio::task::block_in_place(|| self.runtime.block_on(stop));
+            tokio::task::block_in_place(|| self.runtime.block_on(shutdown));
         } else {
-            self.runtime.spawn(stop);
+            self.runtime.spawn(shutdown);
         }
     }
 }

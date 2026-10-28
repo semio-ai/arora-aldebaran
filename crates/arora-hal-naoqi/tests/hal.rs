@@ -2,6 +2,7 @@
 
 mod fake_naoqi;
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use arora_behavior::Status;
@@ -300,6 +301,67 @@ async fn dropping_the_hal_stops_the_base() {
         robot.move_toward.lock().unwrap().as_slice(),
         [(0.5f32, 0.0, 0.0), (0.0, 0.0, 0.0)]
     );
+}
+
+/// A stop that failed leaves the base moving: the HAL still stops it when it goes.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_the_hal_stops_the_base_after_a_failed_stop() {
+    let (robot, hal) = start().await;
+    hal.write(StateChange::set(keys::VELOCITY_X, Value::F64(0.5)))
+        .await
+        .unwrap();
+    robot.move_toward_fails.store(true, Ordering::SeqCst);
+    assert!(hal
+        .write(StateChange::set(keys::VELOCITY_X, Value::F64(0.0)))
+        .await
+        .is_err());
+    robot.move_toward_fails.store(false, Ordering::SeqCst);
+    drop(hal);
+    assert_eq!(
+        robot.move_toward.lock().unwrap().as_slice(),
+        [(0.5f32, 0.0, 0.0), (0.0, 0.0, 0.0)]
+    );
+}
+
+/// A queued stop cut short by the drop, after it cached a zero velocity but before it
+/// reached the robot: the HAL still stops the base.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_the_hal_stops_the_base_after_a_cancelled_stop() {
+    let (robot, hal) = start().await;
+    hal.write(StateChange::set(keys::VELOCITY_X, Value::F64(0.5)))
+        .await
+        .unwrap();
+    *robot.set_angles_delay.lock().unwrap() = Duration::from_secs(2);
+    let mut change = StateChange::set(keys::VELOCITY_X, Value::F64(0.0));
+    change
+        .set
+        .insert(Key::from("head_yaw.target_position"), Some(Value::F64(0.1)));
+    hal.try_send(&change);
+    // The queued write caches the zero velocity, then waits on setAngles.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drop(hal);
+    assert_eq!(
+        robot.move_toward.lock().unwrap().as_slice(),
+        [(0.5f32, 0.0, 0.0), (0.0, 0.0, 0.0)]
+    );
+}
+
+/// The sonars measure only while subscribed: the HAL subscribes to `ALSonar` when sonar
+/// sensing is on, and unsubscribes when it goes.
+#[tokio::test(flavor = "multi_thread")]
+async fn subscribes_to_the_sonars_while_it_runs() {
+    let (robot, hal) = start().await;
+    assert_eq!(
+        robot.sonar_subscribers.lock().unwrap().as_slice(),
+        ["arora-naoqi".to_string()]
+    );
+    drop(hal);
+    assert!(robot.sonar_subscribers.lock().unwrap().is_empty());
+
+    let mut config = NaoqiRobotConfig::with_url(&robot.url);
+    config.sensors.sonar = false;
+    let _hal = NaoqiHal::new(config).await.expect("connect the HAL");
+    assert!(robot.sonar_subscribers.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
