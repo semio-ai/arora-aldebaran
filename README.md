@@ -213,7 +213,13 @@ and pass `--studio` on every run that should connect.
 
 They build against the published Arora crates from
 [arora-sdk](https://github.com/semio-ai/arora-sdk), on the same pinned nightly
-(`rust-toolchain.toml`).
+(`rust-toolchain.toml`). A daily CI job also builds and tests them against arora-sdk's
+`main`, so a change there that breaks them shows before it is released; locally:
+
+```bash
+.github/scripts/patch-arora-sdk.sh ../arora-sdk    # appends a [patch.crates-io]
+CARGO_UNSTABLE_BINDEPS=true cargo test --features runner
+```
 
 ```bash
 cargo test                      # the HAL, against a fake NAOqi

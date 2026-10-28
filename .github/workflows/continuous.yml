@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Daily, against arora-sdk's main (the `arora-sdk-main` job below).
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,6 +21,7 @@ jobs:
   # which also turns on the Semio Studio connection): its tests, the device
   # test against a fake NAOqi among them, run in both.
   test:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -47,7 +52,45 @@ jobs:
   # Homebrew formula not available on the CI image. See
   # crates/arora-hal-naoqi/readme.md#deploy-it-on-the-robot.
 
+  # The crates against arora-sdk's main rather than the published Arora crates, so a
+  # change there that breaks the HAL shows before it is released. Daily and on
+  # demand it gates; on a pull request it only reports, as arora-sdk's main may be
+  # broken for reasons the pull request has nothing to do with.
+  arora-sdk-main:
+    if: github.event_name != 'push'
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # arora-sdk's manifests declare artifact dependencies (dev-only), which cargo
+      # parses only with bindeps on.
+      CARGO_UNSTABLE_BINDEPS: "true"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: semio-ai/arora-sdk
+          ref: main
+          path: arora-sdk
+
+      - name: Use arora-sdk's toolchain and crates
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' arora-sdk/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --component clippy
+          echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
+          .github/scripts/patch-arora-sdk.sh arora-sdk
+          RUSTUP_TOOLCHAIN=$channel cargo update --workspace
+          echo "arora-sdk $(git -C arora-sdk rev-parse --short HEAD), toolchain $channel" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clippy (runner)
+        run: cargo clippy --all-targets --features runner -- -D warnings
+
+      - name: Test (runner)
+        run: cargo test --features runner
+
   markdown-link-check:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
