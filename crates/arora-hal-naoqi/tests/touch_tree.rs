@@ -1,6 +1,6 @@
 //! `trees/touch.groot.xml` on the Arora runtime against an in-process fake NAOqi: a touch of
-//! the front of the head greets, the greeting plays to its end once started, and the next
-//! touch greets again.
+//! the front of the head greets once, the greeting plays to its end once started, and the
+//! next touch greets again.
 
 #[allow(dead_code)]
 mod fake_naoqi;
@@ -74,9 +74,26 @@ async fn a_touch_of_the_head_greets() {
     };
     let gesture_steps = (HANDS_READY_DURATION.as_millis() / STEP.as_millis()) as usize + 50;
 
+    // The greeting arms once the tree has seen the head untouched: the HAL reads the sensor
+    // at start, in its own time, so the test steps until then.
+    let armed = || {
+        store
+            .read(&[Key::from("touch_tree.armed")])
+            .pop()
+            .flatten()
+            .is_some()
+    };
+    for _ in 0..200 {
+        step(&mut device, 1);
+        if armed() {
+            break;
+        }
+    }
+    assert!(armed(), "untouched, the greeting arms");
+
     // A tap: touched, then released while the gesture plays.
     robot.raise_event("FrontTactilTouched", 1.0);
-    for _ in 0..100 {
+    for _ in 0..200 {
         step(&mut device, 1);
         if last_hand_stiffness(&robot) == Some(0.6) {
             break;
@@ -107,16 +124,53 @@ async fn a_touch_of_the_head_greets() {
         "the hands are relaxed once over"
     );
 
-    // Released, it rests; the next touch greets again.
+    // Released, it rests.
     step(&mut device, 20);
     assert_eq!(greetings(&robot), 1, "untouched, it rests");
+
+    // A head held past a greeting greets once.
     robot.raise_event("FrontTactilTouched", 1.0);
-    step(&mut device, 10);
-    robot.raise_event("FrontTactilTouched", 0.0);
-    step(&mut device, gesture_steps);
-    let greeted_by = std::time::Instant::now() + Duration::from_secs(5);
-    while greetings(&robot) < 2 && std::time::Instant::now() < greeted_by {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let held_by = std::time::Instant::now() + Duration::from_secs(5);
+    while greetings(&robot) < 2 && std::time::Instant::now() < held_by {
+        step(&mut device, 5);
     }
-    assert_eq!(greetings(&robot), 2, "the next touch greets again");
+    assert_eq!(greetings(&robot), 2, "a held touch greets");
+    step(&mut device, 2 * gesture_steps);
+    assert_eq!(
+        greetings(&robot),
+        2,
+        "held past the greeting, it does not greet again"
+    );
+    // Released: the tree re-arms once it sees the release. The events reach the tree in their
+    // own time, so the test steps until it sees each one acted on rather than counting steps.
+    robot.raise_event("FrontTactilTouched", 0.0);
+    for _ in 0..200 {
+        step(&mut device, 1);
+        if armed() {
+            break;
+        }
+    }
+    assert!(armed(), "a release re-arms the greeting");
+
+    // The next touch greets again.
+    robot.raise_event("FrontTactilTouched", 1.0);
+    for _ in 0..200 {
+        step(&mut device, 1);
+        if last_hand_stiffness(&robot) == Some(0.6) {
+            break;
+        }
+    }
+    assert_eq!(
+        last_hand_stiffness(&robot),
+        Some(0.6),
+        "the gesture plays again"
+    );
+    robot.raise_event("FrontTactilTouched", 0.0);
+    for _ in 0..2 * gesture_steps {
+        step(&mut device, 1);
+        if greetings(&robot) == 3 {
+            break;
+        }
+    }
+    assert_eq!(greetings(&robot), 3, "the next touch greets again");
 }

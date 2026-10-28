@@ -93,8 +93,14 @@ jobs:
       - name: Clippy (runner)
         run: cargo clippy --all-targets --features runner -- -D warnings
 
+      - name: Clippy (runner, studio)
+        run: cargo clippy --all-targets --features runner,studio -- -D warnings
+
       - name: Test (runner)
         run: cargo test --features runner
+
+      - name: Test (runner, studio)
+        run: cargo test --features runner,studio --bins
 
   markdown-link-check:
     if: github.event_name != 'schedule'
