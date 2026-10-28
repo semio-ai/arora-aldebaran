@@ -73,8 +73,10 @@ The sonars measure only while someone subscribes to `ALSonar`: with sonar sensin
 (`sensors.sonar`, the default), the HAL does, and unsubscribes when it goes.
 
 Commands reach the robot in the order they are written. When the HAL goes (the runner
-stops), a base that may be moving is stopped (`ALMotion.moveToward(0, 0, 0)`), and commands
-still queued are not sent.
+stops), a base that may be moving is stopped (`ALMotion.moveToward(0, 0, 0)`), commands
+still queued are not sent, and the robot is put to rest (`ALMotion.rest`: it sits or
+crouches, then its joints are relaxed), so no joint stays stiffened. Set
+`"rest_on_exit": false` in the configuration to leave the robot as it is.
 
 The HAL receives and publishes keys; it sets no key meta. Which keys remote writers may
 change is the device's to say, as with the other HALs: the runner opens

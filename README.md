@@ -70,7 +70,7 @@ The device starts, the robot says "Arora is ready" with its hands, and:
 |---|---|
 | `r` | plays the default behavior again |
 | `PgUp` / `PgDn` / `End`, mouse wheel | scroll the logs, follow them again |
-| `q`, `Ctrl-C` | stop the device |
+| `q`, `Ctrl-C` | stop the device; the robot goes to rest (it sits or crouches, then relaxes) |
 
 More logs: set `RUST_LOG=debug` before the command. Without a terminal (`nohup`, a
 service), the runner is headless and asks nothing.
@@ -81,9 +81,9 @@ device name, a model family (`nao`). Leave the owner empty to run without Studio
 
 Options: `--tree <file.groot.xml>` runs another behavior tree, `--no-tree` none; `--studio`
 connects to Semio Studio, `--no-studio` keeps a registered device on the local bridge; a
-JSON configuration ([`configs/nao.json`](crates/arora-hal-naoqi/configs/nao.json): joint ids, sampling period,
-joint speed, sensor families, Autonomous Life) can replace the address, and a second JSON
-file overrides it.
+JSON configuration ([`configs/nao.json`](crates/arora-hal-naoqi/configs/nao.json): joint
+ids, sampling period, joint speed, sensor families, Autonomous Life, rest on exit) can
+replace the address, and a second JSON file overrides it.
 
 Modules: the device loads every module directory in its device directory's `modules/`,
 then each `--module <dir>` (repeatable), as the `arora` runner does: a module's

@@ -8,6 +8,9 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ### Added
 
+- `rest_on_exit` (on by default): when the HAL goes, the runner's exit included, it puts
+  the robot to rest (`ALMotion.rest`: it sits or crouches, then its joints are relaxed), so
+  no joint stays stiffened.
 - `EndSpeech` (`naoqi-say`) and `EndGestures` (`naoqi-gestures`): leaves that end an
   episode, so the same sentence or gesture asked again right after plays anew. The default
   tree calls them before handing the request back.
