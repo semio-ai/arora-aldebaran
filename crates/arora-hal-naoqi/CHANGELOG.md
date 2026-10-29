@@ -42,6 +42,9 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ### Fixed
 
+- The library builds on its own (`cargo build -p arora-hal-naoqi`): its Tokio dependency
+  lists `rt-multi-thread`, which dropping the HAL uses (`block_in_place`). A workspace
+  build, unifying features, hid that it was missing.
 - Two joints mapped to the same id, an empty id and an id with a `.` are refused at
   connection, rather than one joint silently shadowing another or a joint left
   uncommandable.

@@ -24,8 +24,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 # rt, time, sync, macros: the sensor sampling, queued-write and voice tasks run on the
-# caller's runtime.
-tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+# caller's runtime; rt-multi-thread: dropping the HAL waits for the robot to stop and rest
+# (`block_in_place`) on a multi-threaded runtime.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "macros"] }
 
 [dev-dependencies]
 # The fake NAOqi the tests drive the HAL against.

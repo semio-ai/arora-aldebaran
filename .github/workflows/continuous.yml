@@ -42,6 +42,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      # A workspace build unifies the crates' features, which can hide a feature a
+      # crate needs and does not declare: each published crate builds on its own.
+      - name: Build each crate alone
+        run: |
+          cargo build -p arora-hal-naoqi
+          cargo build -p arora-aldebaran
+
       - name: Test
         run: cargo test --workspace
 
