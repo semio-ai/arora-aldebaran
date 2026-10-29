@@ -2,7 +2,9 @@
 resolver = "2"
 
 members = [
+  "crates/arora-aldebaran",
   "crates/arora-hal-naoqi",
+  "crates/fake-naoqi",
 ]
 
 [profile.release]

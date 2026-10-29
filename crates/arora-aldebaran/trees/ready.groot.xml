@@ -1,5 +1,5 @@
 <root main_tree_to_execute="MainTree">
-  <!-- The default behavior of arora-naoqi. While command.ready holds a request
+  <!-- The default behavior of arora-aldebaran. While command.ready holds a request
        (any non-empty text), the robot says "Arora is ready" as its hands play a
        gesture: the wrists rotate slightly back and forth, the hands open and
        close. Once both are over, the branch hands the request back (unsets the

@@ -17,9 +17,9 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  # The library alone, then with the `arora-naoqi` runner (feature `runner`),
-  # then the runner with its Semio Studio connection (feature `studio`): the
-  # tests, the device tests against a fake NAOqi among them, run in each.
+  # The workspace with its default HAL (`naoqi`), then the runner with its Semio
+  # Studio connection (arora-aldebaran's `studio`): the tests, the HAL's and the
+  # device's against a fake NAOqi, run in each.
   test:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -34,29 +34,22 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Clippy (runner)
-        run: cargo clippy --all-targets --features runner -- -D warnings
-
-      - name: Clippy (runner, studio)
-        run: cargo clippy --all-targets --features runner,studio -- -D warnings
+      - name: Clippy (studio)
+        run: cargo clippy --workspace --all-targets --features arora-aldebaran/studio -- -D warnings
 
       - name: Check formatting
         run: cargo fmt --check
 
       - name: Test
-        run: cargo test
+        run: cargo test --workspace
 
-      - name: Test (runner)
-        run: cargo test --features runner
+      - name: Test (studio)
+        run: cargo test -p arora-aldebaran --features studio --bins
 
-      - name: Test (runner, studio)
-        run: cargo test --features runner,studio --bins
-
-  # The NAO cross-build of `arora-naoqi` is not exercised here; it depends on a
-  # Homebrew formula not available on the CI image. See
-  # crates/arora-hal-naoqi/readme.md#deploy-it-on-the-robot.
+  # The NAO cross-build of `arora-aldebaran` is not exercised here: it takes a
+  # cross toolchain and half an hour. See README.md#deploy-it-on-the-robot.
 
   # The crates against arora-sdk's main rather than the published Arora crates, so a
   # change there that breaks the HAL shows before it is released. Daily and on
@@ -90,17 +83,17 @@ jobs:
           RUSTUP_TOOLCHAIN=$channel .github/scripts/patch-arora-sdk.sh arora-sdk
           echo "arora-sdk $(git -C arora-sdk rev-parse --short HEAD), toolchain $channel" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Clippy (runner)
-        run: cargo clippy --all-targets --features runner -- -D warnings
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Clippy (runner, studio)
-        run: cargo clippy --all-targets --features runner,studio -- -D warnings
+      - name: Clippy (studio)
+        run: cargo clippy --workspace --all-targets --features arora-aldebaran/studio -- -D warnings
 
-      - name: Test (runner)
-        run: cargo test --features runner
+      - name: Test
+        run: cargo test --workspace
 
-      - name: Test (runner, studio)
-        run: cargo test --features runner,studio --bins
+      - name: Test (studio)
+        run: cargo test -p arora-aldebaran --features studio --bins
 
   markdown-link-check:
     if: github.event_name != 'schedule'

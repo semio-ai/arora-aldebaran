@@ -6,28 +6,26 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** the `arora-naoqi` runner and the `runner` and `studio` features: the runner
+  is `arora-aldebaran`, in the crate of that name, which selects this HAL with its `naoqi`
+  feature. The trees (`READY_TREE`), `ready_tree_initial_state`, `COMMAND_READY`,
+  `READY_REQUEST`, `READY_TREE_JOINTS` and the gesture leaves (`gestures`) moved there too:
+  they do not depend on the HAL. The library is the HAL, its configuration, the robot
+  standard and its keys, and its voice (`say`).
+
 ### Added
 
 - `rest_on_exit` (on by default): when the HAL goes, the runner's exit included, it puts
   the robot to rest (`ALMotion.rest`: it sits or crouches, then its joints are relaxed), so
   no joint stays stiffened.
-- `EndSpeech` (`naoqi-say`) and `EndGestures` (`naoqi-gestures`): leaves that end an
-  episode, so the same sentence or gesture asked again right after plays anew. The default
-  tree calls them before handing the request back.
+- `EndSpeech` (`naoqi-say`): a leaf that ends a speech episode, so the same sentence asked
+  again right after is said anew.
 - `NaoqiRobotConfigOverrides` and `SensorsOverrides`, what `apply_overrides` takes.
 
 ### Changed
 
-- **Breaking:** arora 16. Building with Semio Studio is the opt-in: `runner` no longer
-  enables `studio`, and a runner built with `--features runner,studio` connects to Studio
-  on every run unless it passes `--no-studio`, enrolling a device that is not enrolled
-  first (by a code entered in Studio, or `STUDIO_ENROLLMENT_TOKEN`). `--studio` and
-  `ARORA_STUDIO` are gone; to migrate, drop them, and build with `studio` a runner that
-  should connect.
-- The runner takes `--device <NAME>`, `--device-dir <PATH>` and `--bridge-port <PORT>`
-  (`ARORA_DEVICE`, `ARORA_DEVICE_DIR`, `ARORA_BRIDGE_PORT`): the device the run is, so
-  several run on one machine. A device's Studio credential is kept under its name in
-  Semio's device store.
 - **Breaking:** `NaoqiRobotConfig::apply_overrides` takes a `NaoqiRobotConfigOverrides`.
   An override replaces exactly the fields it sets, even with their default value, and
   keeps the others: a credentials-only override no longer re-enables disabled sensors, and

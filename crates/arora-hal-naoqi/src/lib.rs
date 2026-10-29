@@ -7,11 +7,14 @@
 //! (`ALMotion`, `ALLeds`). The keys are those of an Arora robot [`standard`], local to this
 //! HAL; [`keys`] maps NAOqi onto them.
 //!
-//! Behavior trees reach the rest of the robot through leaves: [`say`] speaks in the robot's
-//! voice (`ALTextToSpeech`), [`gestures`] play timed joint targets.
+//! Behavior trees speak in the robot's voice (`ALTextToSpeech`) through the [`say`] leaf,
+//! once [`NaoqiHal::voice`] is installed.
 //!
 //! The robot is described by a [`NaoqiRobotConfig`] (address, credentials, joint id
 //! mapping, sampling period); `configs/nao.json` is a sample.
+//!
+//! The device runner, which runs a robot with this HAL, is the `arora-aldebaran` crate: see
+//! the [repository's README](https://github.com/semio-ai/arora-aldebaran#readme).
 
 mod config;
 pub use config::{
@@ -27,59 +30,8 @@ pub use naoqi_error::NaoqiRobotError;
 mod naoqi_hal;
 pub use naoqi_hal::{NaoqiHal, Voice};
 
-pub mod gestures;
 pub mod say;
 pub mod standard;
-
-/// The default behavior of `arora-naoqi`, a Groot tree: while [`COMMAND_READY`] holds a
-/// request (any non-empty text), the robot says "Arora is ready" as its hands play a
-/// gesture, then hands the request back (unsets the key). Its leaves are [`say`],
-/// [`gestures`] and the native `IsStringSet` and `UnsetString`.
-pub const READY_TREE: &str = include_str!("../trees/ready.groot.xml");
-
-/// The key that requests the default behavior: any non-empty text plays it once.
-pub const COMMAND_READY: &str = "command.ready";
-
-/// The text the runner writes to [`COMMAND_READY`] to request the default behavior.
-pub const READY_REQUEST: &str = "ready";
-
-/// The joints the default behavior's gesture moves, by their default ids.
-pub const READY_TREE_JOINTS: [&str; 4] = ["l_wrist_yaw", "r_wrist_yaw", "l_hand", "r_hand"];
-
-/// The keys the default behavior's leaves write, seeded so that they bind: a tree's
-/// out-parameter binds to a key that exists. Joint targets start where the robot is
-/// (`state`, its HAL's [`read_all`](arora_hal::Hal::read_all)), so that writing them
-/// moves nothing. [`COMMAND_READY`] starts requested: the behavior plays at start.
-pub fn ready_tree_initial_state(
-    state: &arora_types::data::State,
-) -> arora_types::data::StateChange {
-    use arora_types::data::{Key, StateChange};
-    use arora_types::value::Value;
-
-    let measured = |joint: &str, component: &str| {
-        state
-            .get(&Key::from(format!("{joint}.{component}")))
-            .cloned()
-            .flatten()
-            .unwrap_or(Value::F64(0.0))
-    };
-    let mut change = StateChange::set(COMMAND_READY, Value::String(READY_REQUEST.to_string()));
-    change.set.insert(
-        Key::from("speech.viseme"),
-        Some(Value::String(say::SILENCE_VISEME.to_string())),
-    );
-    for joint in READY_TREE_JOINTS {
-        change.set.insert(
-            Key::from(format!("{joint}.{}", keys::TARGET_POSITION)),
-            Some(measured(joint, keys::POSITION)),
-        );
-        change.set.insert(
-            Key::from(format!("{joint}.{}", keys::TARGET_STIFFNESS)),
-            Some(measured(joint, keys::STIFFNESS)),
-        );
-    }
-    change
-}
 
 #[cfg(test)]
 mod tests {
