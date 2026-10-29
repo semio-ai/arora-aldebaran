@@ -448,7 +448,9 @@ The package is `dist/arora-naoqi-i686/`: `lib/libarora_naoqi.so`, a sample confi
 (`arora_naoqi.json`) and the line of `autoload.ini`. The script checks what the library needs
 of the robot: no glibc symbol newer than 2.12, and no C++ symbol that is not NAOqi's, its
 Boost's or in the libstdc++ of GCC 4.8. `FEATURES=` builds it without Semio Studio (it is in
-by default).
+by default). It builds with the workspace's `robot` profile: release optimized for size,
+without debug information (about 41 MB, against 62 with `release`), its WebAssembly
+interpreter optimized for speed; `PROFILE=release` builds with release instead.
 
 ### Install it
 

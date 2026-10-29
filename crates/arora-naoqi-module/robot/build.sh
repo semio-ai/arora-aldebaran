@@ -14,7 +14,7 @@
 #
 # Needs cargo-zigbuild (the Rust code, for the glibc 2.13 of NAOqi 2.1) and Docker (GCC 4.8 for
 # the bridge, as old as the libstdc++ of NAOqi 2.1). Variables: FEATURES (default `studio`),
-# GLIBC (default 2.13).
+# GLIBC (default 2.13), PROFILE (default `robot`, the workspace's).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
@@ -46,14 +46,15 @@ export "CXX_${TARGET//-/_}=$HERE/g++.sh"
 # handling cannot catch what NAOqi's libstdc++ throws. The C++ runtime the bridge uses is the
 # libstdc++ and libgcc_s NAOqi has loaded.
 export "CXXSTDLIB_${TARGET//-/_}="
-export CARGO_PROFILE_RELEASE_DEBUG=${CARGO_PROFILE_RELEASE_DEBUG:-0}
-(cd "$ROOT" && cargo zigbuild --release -p arora-naoqi-module --features "bridge${FEATURES:+,$FEATURES}" \
+# The workspace's `robot` profile: release, without debug information, smaller.
+PROFILE=${PROFILE:-robot}
+(cd "$ROOT" && cargo zigbuild --profile "$PROFILE" -p arora-naoqi-module --features "bridge${FEATURES:+,$FEATURES}" \
   --target "$TARGET.$GLIBC")
 
 OUT="$ROOT/dist/arora-naoqi-$ARCH"
 rm -rf "$OUT" && mkdir -p "$OUT/lib"
 LIBRARY="$OUT/lib/libarora_naoqi.so"
-cp "$TARGET_DIR/$TARGET/release/libarora_naoqi.so" "$LIBRARY"
+cp "$TARGET_DIR/$TARGET/$PROFILE/libarora_naoqi.so" "$LIBRARY"
 "$HERE/g++.sh" --version >/dev/null
 docker run --rm --network none -v "$OUT:$OUT" arora-robot-gxx strip --strip-unneeded "$LIBRARY"
 cp "$HERE/arora_naoqi.json" "$OUT/"
