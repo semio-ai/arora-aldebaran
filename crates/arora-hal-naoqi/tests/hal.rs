@@ -1,7 +1,5 @@
 //! The NAOqi HAL against an in-process fake NAOqi.
 
-mod fake_naoqi;
-
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 

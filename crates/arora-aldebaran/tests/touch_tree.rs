@@ -1,40 +1,34 @@
 //! `trees/touch.groot.xml` on the Arora runtime against an in-process fake NAOqi: a touch of
 //! the front of the head greets once, the greeting plays to its end once started, and the
 //! next touch greets again.
-
-#[allow(dead_code)]
-mod fake_naoqi;
+// The device against the fake NAOqi: the `naoqi` HAL.
+#![cfg(feature = "naoqi")]
 
 use std::time::Duration;
 
 use arora::{Arora, HostModule};
-use arora_hal::Hal;
-use arora_hal_naoqi::gestures::{naoqi_gestures, HANDS_READY_DURATION};
-use arora_hal_naoqi::say::{self, naoqi_say};
-use arora_hal_naoqi::{ready_tree_initial_state, NaoqiHal, NaoqiRobotConfig, COMMAND_READY};
+use arora_aldebaran::gestures::{naoqi_gestures, HANDS_READY_DURATION};
+use arora_aldebaran::{ready_tree_initial_state, robot, COMMAND_READY, TOUCH_TREE};
 use arora_simple_data_store::SimpleDataStore;
 use arora_types::data::{DataStore, Key};
 use fake_naoqi::FakeNaoqi;
 
-const TOUCH_TREE: &str = include_str!("../trees/touch.groot.xml");
 const STEP: Duration = Duration::from_millis(20);
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_touch_of_the_head_greets() {
     let robot = FakeNaoqi::start().await;
-    let hal = NaoqiHal::new(NaoqiRobotConfig::with_url(&robot.url))
+    let connected = robot::connect(&robot.url, None)
         .await
-        .expect("connect the HAL");
-    say::install(hal.voice());
+        .expect("connect the robot");
     let store = SimpleDataStore::new();
-    let mut seed = ready_tree_initial_state(&hal.read_all().await.unwrap());
+    let mut seed = ready_tree_initial_state(&connected.hal.read_all().await.unwrap());
     // Start at rest: no request, so only a touch plays.
     seed.set.remove(&Key::from(COMMAND_READY));
     store.write(seed).unwrap();
-    let mut device = Arora::builder()
+    let mut device = connected
+        .install(Arora::builder())
         .with_data_store(Box::new(store.clone()))
-        .with_hal(Box::new(hal))
-        .with_host_module(HostModule::of::<naoqi_say::Module>())
         .with_host_module(HostModule::of::<naoqi_gestures::Module>())
         .with_groot(TOUCH_TREE)
         .build()

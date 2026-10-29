@@ -1,12 +1,12 @@
-//! arora-naoqi: runs a NAOqi robot (NAO, Pepper) as an Arora device.
+//! arora-aldebaran: runs an Aldebaran robot (NAO, Pepper) as an Arora device.
 //!
-//! Usage: `arora-naoqi [--tree <FILE> | --no-tree] [--module <DIR>]... [--device <NAME>]
+//! Usage: `arora-aldebaran [--tree <FILE> | --no-tree] [--module <DIR>]... [--device <NAME>]
 //! [--device-dir <PATH>] [--bridge-port <PORT>] [--no-studio] <ROBOT> [OVERRIDES]`
 //! (`--help` lists the options; `--no-studio` in a build with the `studio` feature).
 //!
-//! The robot is picked at runtime: the first argument (or the `ROBOT` env var) is the
-//! address of its NAOqi or a path to a `NaoqiRobotConfig` JSON file (see
-//! `configs/nao.json`). An optional second JSON file overrides the selected config.
+//! The robot is reached through the HAL the build selects ([`arora_aldebaran::robot`]): with
+//! `naoqi`, the default, the first argument (or the `ROBOT` env var) is the address of its
+//! NAOqi or a path to a `NaoqiRobotConfig` JSON file, and an optional second one overrides it.
 //!
 //! The device serves the open local bridge. Built with the `studio` feature, it connects to
 //! Semio Studio instead, enrolling a device that is not enrolled with Studio first, unless
@@ -17,11 +17,11 @@
 //! `ARORA_BRIDGE_PORT`) give the device the run is: its name on this machine, its
 //! directory and the port of its open local bridge.
 //!
-//! The device runs a behavior tree: by default `trees/ready.groot.xml`, which says "Arora is
-//! ready" with a hand gesture at start; `--tree` runs another one, `--no-tree` none. The
-//! tree's leaves are the robot's voice (`Say`), its gestures (`HandsReady`) and the
-//! native `IsStringSet` and `UnsetString`. On the terminal UI, `r` requests it again through
-//! `ready`, which plays the default behavior again; the key is open to remote writers too.
+//! The device runs a behavior tree: by default [`READY_TREE`], which says "Arora is ready"
+//! with a hand gesture at start; `--tree` runs another one, `--no-tree` none. The tree's
+//! leaves are the HAL's voice (`Say`), the gestures (`HandsReady`) and the native nodes. On
+//! the terminal UI, `r` requests the default behavior again through `command.ready`; the key
+//! is open to remote writers too.
 //!
 //! The device carries the modules its device directory holds under `modules/`, then each
 //! `--module` directory, as the `arora` runner does (`AroraBuilder::with_module_dirs`): a
@@ -35,11 +35,8 @@ use std::time::Duration;
 use anyhow::Context;
 use arora::tui::{commands_frontend, TuiCommand};
 use arora::{Arora, HostModule, RunnerArgs};
-use arora_hal::Hal;
-use arora_hal_naoqi::{
-    gestures::naoqi_gestures, ready_tree_initial_state, say, say::naoqi_say, NaoqiHal,
-    NaoqiRobotConfig, NaoqiRobotConfigOverrides, COMMAND_READY, READY_REQUEST, READY_TREE,
-};
+use arora_aldebaran::gestures::naoqi_gestures;
+use arora_aldebaran::{ready_tree_initial_state, robot, COMMAND_READY, READY_REQUEST, READY_TREE};
 use arora_simple_data_store::SimpleDataStore;
 use arora_types::data::{DataStore, Key, KeyMeta, StateChange};
 use arora_types::value::Value;
@@ -52,40 +49,11 @@ const STEP_PERIOD: Duration = Duration::from_millis(20);
 /// The terminal UI key that plays the default behavior again.
 const READY_KEY: char = 'r';
 
-fn load_config(selector: &str) -> anyhow::Result<NaoqiRobotConfig> {
-    if is_address(selector) {
-        return Ok(NaoqiRobotConfig::with_url(selector));
-    }
-    read_json(selector)
-}
-
-/// Overrides from an address (it replaces the robot's) or a JSON file (what it sets
-/// replaces the robot's configuration, the rest is kept).
-fn load_overrides(selector: &str) -> anyhow::Result<NaoqiRobotConfigOverrides> {
-    if is_address(selector) {
-        return Ok(NaoqiRobotConfigOverrides {
-            url: Some(selector.to_string()),
-            ..Default::default()
-        });
-    }
-    read_json(selector)
-}
-
-fn is_address(selector: &str) -> bool {
-    selector.starts_with("tcp://") || selector.starts_with("tcps://")
-}
-
-fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> anyhow::Result<T> {
-    let file =
-        std::fs::File::open(path).with_context(|| format!("failed to open robot config {path}"))?;
-    serde_json::from_reader(file).with_context(|| format!("failed to parse robot config {path}"))
-}
-
 /// The runner's command line.
 #[derive(Debug, Parser)]
 #[command(
-    name = "arora-naoqi",
-    about = "Runs a NAOqi robot (NAO, Pepper) as an Arora device"
+    name = "arora-aldebaran",
+    about = "Runs an Aldebaran robot (NAO, Pepper) as an Arora device"
 )]
 struct Cli {
     /// A Groot behavior tree to run instead of the default one.
@@ -94,9 +62,8 @@ struct Cli {
     /// Run no behavior tree.
     #[arg(long)]
     no_tree: bool,
-    /// The robot: its NAOqi's address (tcp://<host>:9559) or a NaoqiRobotConfig
-    /// JSON file.
-    #[arg(env = "ROBOT")]
+    /// The robot, as the build's HAL names it.
+    #[arg(env = "ROBOT", help = format!("The robot: {}", robot::ROBOT_HELP))]
     robot: String,
     /// A JSON file overriding the robot's configuration.
     overrides: Option<String>,
@@ -134,10 +101,6 @@ fn ready() -> StateChange {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let tree = cli.tree()?;
-    let mut config = load_config(&cli.robot)?;
-    if let Some(overrides) = &cli.overrides {
-        config.apply_overrides(load_overrides(overrides)?);
-    }
 
     // The front end first: it installs the log sink, so the connection's logs are shown.
     let (frontend, mut commands) = commands_frontend(vec![TuiCommand {
@@ -156,18 +119,17 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "studio")]
     let builder = builder.with_studio(cli.studio.choice());
 
-    // One runtime carries everything: the HAL's tasks spawn on it at construction, the
+    // One runtime carries everything: the HAL's tasks spawn on it at construction, its
     // voice speaks on it, and arora drives the device on it.
-    let hal = NaoqiHal::new(config)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to start the NAOqi HAL: {e}"))?;
-    say::install(hal.voice());
+    log::info!("Connecting to the robot through {}", robot::HAL);
+    let robot = robot::connect(&cli.robot, cli.overrides.as_deref()).await?;
 
     // The default behavior starts at once; the request key is open to remote writers, so
     // Studio or a bridge client can play it again as the terminal UI does.
     let store = SimpleDataStore::new();
     if tree.is_some() {
-        let state = hal
+        let state = robot
+            .hal
             .read_all()
             .await
             .map_err(|e| anyhow::anyhow!("failed to read the robot's state: {e}"))?;
@@ -185,10 +147,9 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let mut builder = builder
+    let mut builder = robot
+        .install(builder)
         .with_data_store(Box::new(store))
-        .with_hal(Box::new(hal))
-        .with_host_module(HostModule::of::<naoqi_say::Module>())
         .with_host_module(HostModule::of::<naoqi_gestures::Module>())
         .with_step_period(STEP_PERIOD);
     if let Some(tree) = tree {
@@ -213,7 +174,7 @@ mod tests {
     #[test]
     fn the_robot_the_tree_and_module_directories_parse() {
         let cli = Cli::try_parse_from([
-            "arora-naoqi",
+            "arora-aldebaran",
             "--module",
             "a",
             "--tree",
@@ -232,10 +193,10 @@ mod tests {
     /// Without `--tree` the default behavior runs; `--no-tree` runs none.
     #[test]
     fn the_default_tree_runs_unless_none_is_asked() {
-        let default = Cli::try_parse_from(["arora-naoqi", "tcp://nao.local:9559"]).unwrap();
+        let default = Cli::try_parse_from(["arora-aldebaran", "tcp://nao.local:9559"]).unwrap();
         assert_eq!(default.tree().unwrap().as_deref(), Some(READY_TREE));
         let none =
-            Cli::try_parse_from(["arora-naoqi", "--no-tree", "tcp://nao.local:9559"]).unwrap();
+            Cli::try_parse_from(["arora-aldebaran", "--no-tree", "tcp://nao.local:9559"]).unwrap();
         assert_eq!(none.tree().unwrap(), None);
     }
 
@@ -243,7 +204,7 @@ mod tests {
     #[test]
     fn a_tree_and_no_tree_conflict() {
         let error = Cli::try_parse_from([
-            "arora-naoqi",
+            "arora-aldebaran",
             "--tree",
             "wave.groot.xml",
             "--no-tree",
@@ -257,7 +218,7 @@ mod tests {
     #[test]
     fn help_is_not_a_robot() {
         for flag in ["-h", "--help"] {
-            let error = Cli::try_parse_from(["arora-naoqi", flag]).expect_err("help stops");
+            let error = Cli::try_parse_from(["arora-aldebaran", flag]).expect_err("help stops");
             assert_eq!(error.kind(), ErrorKind::DisplayHelp, "{flag}");
             assert_eq!(error.exit_code(), 0, "{flag}");
         }
@@ -266,8 +227,9 @@ mod tests {
     /// An option the runner does not take is refused, not read as a robot.
     #[test]
     fn an_unknown_option_is_refused() {
-        let error = Cli::try_parse_from(["arora-naoqi", "--modules", "a", "tcp://nao.local:9559"])
-            .expect_err("an unknown option is refused");
+        let error =
+            Cli::try_parse_from(["arora-aldebaran", "--modules", "a", "tcp://nao.local:9559"])
+                .expect_err("an unknown option is refused");
         assert_eq!(error.kind(), ErrorKind::UnknownArgument);
     }
 
@@ -275,7 +237,7 @@ mod tests {
     #[test]
     fn the_device_options_give_the_device() {
         let cli = Cli::try_parse_from([
-            "arora-naoqi",
+            "arora-aldebaran",
             "--device",
             "nao-2",
             "--device-dir=/srv/nao-2",
@@ -303,18 +265,18 @@ mod tests {
                 .choice()
         };
         assert_eq!(
-            choice(&["arora-naoqi", "tcp://nao.local:9559"]),
+            choice(&["arora-aldebaran", "tcp://nao.local:9559"]),
             Choice::Studio
         );
         assert_eq!(
-            choice(&["arora-naoqi", "--no-studio", "tcp://nao.local:9559"]),
+            choice(&["arora-aldebaran", "--no-studio", "tcp://nao.local:9559"]),
             Choice::Local
         );
         assert_eq!(
-            choice(&["arora-naoqi", "tcp://nao.local:9559", "--no-studio"]),
+            choice(&["arora-aldebaran", "tcp://nao.local:9559", "--no-studio"]),
             Choice::Local
         );
-        let error = Cli::try_parse_from(["arora-naoqi", "--studio", "tcp://nao.local:9559"])
+        let error = Cli::try_parse_from(["arora-aldebaran", "--studio", "tcp://nao.local:9559"])
             .expect_err("--studio is refused");
         assert_eq!(error.kind(), ErrorKind::UnknownArgument);
     }
@@ -324,7 +286,7 @@ mod tests {
     #[cfg(not(feature = "studio"))]
     #[test]
     fn no_studio_is_refused_without_the_studio_feature() {
-        let error = Cli::try_parse_from(["arora-naoqi", "--no-studio", "tcp://nao.local:9559"])
+        let error = Cli::try_parse_from(["arora-aldebaran", "--no-studio", "tcp://nao.local:9559"])
             .expect_err("--no-studio is refused");
         assert_eq!(error.kind(), ErrorKind::UnknownArgument);
     }

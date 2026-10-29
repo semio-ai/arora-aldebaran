@@ -1,5 +1,5 @@
 # Cross-compilation linker for the NAO target, used by the cross-build of
-# the arora-naoqi runner (see crates/arora-hal-naoqi/readme.md). Its crates
+# the arora-aldebaran runner (see README.md, "Deploy it on the robot"). Its crates
 # with C code (ring, aws-lc-sys, zstd-sys) are compiled by the Homebrew
 # i686-unknown-linux-musl cross-gcc, so Rust must use the matching linker.
 # The brew formula provides the toolchain at /opt/homebrew/bin (Apple

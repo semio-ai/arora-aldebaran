@@ -1,19 +1,15 @@
-//! The arora-naoqi device end to end against an in-process fake NAOqi: the HAL, the
+//! The arora-aldebaran device end to end against an in-process fake NAOqi: the NAOqi HAL, the
 //! default tree and its leaves (Say, HandsReady, the native IsStringSet and UnsetString) on
 //! the Arora runtime.
-
-#[allow(dead_code)]
-mod fake_naoqi;
+// The device against the fake NAOqi: the `naoqi` HAL.
+#![cfg(feature = "naoqi")]
 
 use std::time::Duration;
 
 use arora::{Arora, HostModule};
-use arora_hal::Hal;
-use arora_hal_naoqi::gestures::{naoqi_gestures, HANDS_READY_DURATION};
-use arora_hal_naoqi::say::{self, naoqi_say};
-use arora_hal_naoqi::{
-    ready_tree_initial_state, NaoqiHal, NaoqiRobotConfig, COMMAND_READY, READY_REQUEST, READY_TREE,
-};
+use arora_aldebaran::gestures::{naoqi_gestures, HANDS_READY_DURATION};
+use arora_aldebaran::{ready_tree_initial_state, robot, COMMAND_READY, READY_REQUEST, READY_TREE};
+use arora_hal_naoqi::say;
 use arora_simple_data_store::SimpleDataStore;
 use arora_types::data::{DataStore, Key, StateChange};
 use arora_types::value::Value;
@@ -30,19 +26,19 @@ fn request(store: &SimpleDataStore) -> Option<Value> {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_ready_tree_speaks_moves_the_hands_and_plays_again_on_request() {
     let robot = FakeNaoqi::start().await;
-    let hal = NaoqiHal::new(NaoqiRobotConfig::with_url(&robot.url))
+    let connected = robot::connect(&robot.url, None)
         .await
-        .expect("connect the HAL");
-    say::install(hal.voice());
+        .expect("connect the robot");
     let store = SimpleDataStore::new();
     store
-        .write(ready_tree_initial_state(&hal.read_all().await.unwrap()))
+        .write(ready_tree_initial_state(
+            &connected.hal.read_all().await.unwrap(),
+        ))
         .unwrap();
     let ready = || StateChange::set(COMMAND_READY, Value::String(READY_REQUEST.to_string()));
-    let mut device = Arora::builder()
+    let mut device = connected
+        .install(Arora::builder())
         .with_data_store(Box::new(store.clone()))
-        .with_hal(Box::new(hal))
-        .with_host_module(HostModule::of::<naoqi_say::Module>())
         .with_host_module(HostModule::of::<naoqi_gestures::Module>())
         .with_groot(READY_TREE)
         .build()

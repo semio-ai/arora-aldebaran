@@ -1,0 +1,12 @@
+[package]
+name = "fake-naoqi"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "A minimal fake NAOqi, hosted in process with qi, for the tests of the HALs and the device"
+
+[dependencies]
+qi = { package = "libqi-vibe", version = "1" }
+# The fake's services sleep where NAOqi takes time (speaking, setAngles).
+tokio = { version = "1", features = ["time"] }

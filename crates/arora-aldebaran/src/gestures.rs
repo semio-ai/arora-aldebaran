@@ -1,4 +1,5 @@
-//! Gestures as behavior-tree leaves: timed joint targets for a NAOqi robot's keys.
+//! Gestures as behavior-tree leaves: timed joint targets on the keys of the Arora robot
+//! standard, so that they play on any HAL that maps them.
 //!
 //! A gesture is an episodic leaf, like `Say`: `Running` while it plays, `Success` once it
 //! has played and for as long as it keeps being ticked, so it pairs with a sentence in a

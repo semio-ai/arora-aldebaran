@@ -187,6 +187,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "arora-aldebaran"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arora",
+ "arora-behavior",
+ "arora-hal",
+ "arora-hal-naoqi",
+ "arora-module",
+ "arora-simple-data-store",
+ "arora-types",
+ "clap",
+ "fake-naoqi",
+ "futures",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "arora-behavior"
 version = "9.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -331,15 +352,12 @@ dependencies = [
 name = "arora-hal-naoqi"
 version = "0.3.0"
 dependencies = [
- "anyhow",
- "arora",
  "arora-behavior",
  "arora-hal",
  "arora-module",
- "arora-simple-data-store",
  "arora-types",
  "async-trait",
- "clap",
+ "fake-naoqi",
  "futures",
  "libqi-vibe",
  "log",
@@ -1678,6 +1696,14 @@ checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
  "parking",
  "pin-project-lite",
+]
+
+[[package]]
+name = "fake-naoqi"
+version = "0.0.0"
+dependencies = [
+ "libqi-vibe",
+ "tokio",
 ]
 
 [[package]]
