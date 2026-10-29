@@ -62,12 +62,17 @@ pub(crate) struct JointCommand {
 pub(crate) struct LedCommand {
     pub color: Option<u32>,
     pub intensity: Option<f32>,
+    /// When it was last written, among the LED commands: overlapping groups are applied in
+    /// that order.
+    pub order: u64,
 }
 
 #[derive(Default)]
 pub(crate) struct Pending {
     pub joints: HashMap<usize, JointCommand>,
     pub leds: HashMap<usize, LedCommand>,
+    /// The LED commands written, which orders them.
+    pub led_writes: u64,
 }
 
 /// What the loop of the DCM and the rest of the HAL share.
@@ -86,6 +91,8 @@ pub(crate) struct Shared {
     pub pending: Mutex<Pending>,
     /// Whether the plugin sends commands: from the start of the HAL to its end.
     pub commanding: AtomicBool,
+    /// The HALs started on the link: the plugin forgets the commands of the previous one.
+    pub generation: AtomicU64,
     /// The cycles of the DCM run.
     pub cycles: AtomicU64,
     /// The commands the DCM refused.
@@ -164,7 +171,10 @@ impl DcmLink {
     }
 
     pub(crate) fn set_commanding(&self, commanding: bool) {
-        if !commanding {
+        if commanding {
+            // A new HAL: the plugin forgets the targets and commands of the previous one.
+            self.shared.generation.fetch_add(1, Ordering::AcqRel);
+        } else {
             // Commands written meanwhile are not applied later by another HAL.
             *lock(&self.shared.pending) = Pending::default();
         }
@@ -224,6 +234,25 @@ struct LedSlot<A> {
     color: u32,
     intensity: f32,
     dirty: bool,
+    /// When its pending command was written.
+    order: u64,
+}
+
+impl<A> LedSlot<A> {
+    fn reset(&mut self) {
+        self.color = 0xFFFFFF;
+        self.intensity = 1.0;
+        self.dirty = false;
+    }
+}
+
+impl<A> JointActuators<A> {
+    fn reset(&mut self) {
+        self.target = None;
+        self.commanded = None;
+        self.stiffness_target = None;
+        self.stiffness_sent = None;
+    }
 }
 
 /// The plugin: what the loop of the DCM runs.
@@ -239,6 +268,8 @@ pub(crate) struct Core<S, A> {
     /// A change the plugin could not publish, the state being locked: the next cycle does.
     deferred: StateChange,
     last_pre_process: Option<Instant>,
+    /// The generation of the HAL whose commands the plugin applies.
+    generation: u64,
     /// Whether a refused command was logged: the DCM's thread logs once.
     refusal_logged: bool,
 }
@@ -379,6 +410,7 @@ pub(crate) fn create<P: Probe>(
             color: 0xFFFFFF,
             intensity: 1.0,
             dirty: false,
+            order: 0,
         });
         led_groups.push(group.name);
     }
@@ -399,6 +431,7 @@ pub(crate) fn create<P: Probe>(
         subscribers: Mutex::new(Vec::new()),
         pending: Mutex::new(Pending::default()),
         commanding: AtomicBool::new(false),
+        generation: AtomicU64::new(0),
         cycles: AtomicU64::new(0),
         refused: AtomicU64::new(0),
     });
@@ -412,6 +445,7 @@ pub(crate) fn create<P: Probe>(
         stiffness_ramp_ms: config.stiffness_ramp_ms,
         deferred: StateChange::new(),
         last_pre_process: None,
+        generation: 0,
         refusal_logged: false,
     };
     Ok((core, DcmLink { shared }))
@@ -486,6 +520,16 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
         if !self.shared.commanding.load(Ordering::Acquire) {
             return;
         }
+        let generation = self.shared.generation.load(Ordering::Acquire);
+        if generation != self.generation {
+            self.generation = generation;
+            for actuators in self.joints.iter_mut().filter_map(|j| j.actuators.as_mut()) {
+                actuators.reset();
+            }
+            for led in &mut self.leds {
+                led.reset();
+            }
+        }
         if let Some(mut pending) = try_lock(&self.shared.pending) {
             let pending = std::mem::take(&mut *pending);
             for (index, command) in pending.joints {
@@ -511,6 +555,7 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
                         led.intensity = intensity;
                     }
                     led.dirty = true;
+                    led.order = command.order;
                 }
             }
         }
@@ -528,10 +573,12 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
             // A joint first commanded, or stiffened again after it was relaxed, starts from
             // where it is: its actuator may hold an old command, which stiffening it would jump
             // to (a relaxed joint sags, or is moved by hand).
+            // A stiffness never sent is unknown: the joint may be relaxed, as ALMotion.rest
+            // leaves it.
             let stiffening = actuators
                 .stiffness_target
                 .is_some_and(|target| target > 0.0)
-                && actuators.stiffness_sent.is_some_and(|sent| sent <= 0.0);
+                && actuators.stiffness_sent.is_none_or(|sent| sent <= 0.0);
             if stiffening {
                 actuators.commanded = None;
             }
@@ -560,10 +607,10 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
                 }
             }
         }
-        for led in &mut self.leds {
-            if !led.dirty {
-                continue;
-            }
+        let mut dirty: Vec<&mut LedSlot<A>> =
+            self.leds.iter_mut().filter(|led| led.dirty).collect();
+        dirty.sort_by_key(|led| led.order);
+        for led in dirty {
             let values: Vec<f32> = led
                 .channels
                 .iter()
@@ -905,6 +952,7 @@ mod tests {
             LedCommand {
                 color: Some(0xFF0000),
                 intensity: Some(0.5),
+                order: 1,
             },
         );
         core.pre_process(&mut dcm);
@@ -913,6 +961,87 @@ mod tests {
             dcm.commands(),
             [("Arora/ChestLeds".to_string(), 0, vec![0.5, 0.0, 0.0])]
         );
+    }
+
+    #[test]
+    fn a_joint_stiffened_for_the_first_time_starts_from_where_it_is() {
+        let mut dcm = FakeDcm::nao(&["HeadYaw"]);
+        let (mut core, link) = create(&dcm, "Arora", &DcmRobotConfig::default()).unwrap();
+        link.set_commanding(true);
+        // A target first, toward which the commanded position steps, the joint relaxed.
+        command(
+            &link,
+            0,
+            JointCommand {
+                position: Some(1.0),
+                stiffness: None,
+            },
+        );
+        core.pre_process(&mut dcm);
+        core.pre_process(&mut dcm);
+        command(
+            &link,
+            0,
+            JointCommand {
+                position: None,
+                stiffness: Some(1.0),
+            },
+        );
+        core.pre_process(&mut dcm);
+        let commands = dcm.commands();
+        let stiffened = commands
+            .iter()
+            .position(|(alias, _, _)| alias == "Arora/HeadYaw/Stiffness")
+            .unwrap();
+        // Right before the stiffness, the position restarts from the sensor's (0), at once.
+        assert_eq!(commands[stiffened - 1].0, "Arora/HeadYaw/Position");
+        assert_eq!(commands[stiffened - 1].1, 0, "{commands:?}");
+        assert!(commands[stiffened - 1].2[0] <= 0.011, "{commands:?}");
+    }
+
+    #[test]
+    fn a_new_hal_forgets_the_commands_of_the_previous_one() {
+        let mut dcm = FakeDcm::nao(&["HeadYaw"]);
+        let (mut core, link) = create(&dcm, "Arora", &DcmRobotConfig::default()).unwrap();
+        link.set_commanding(true);
+        command(
+            &link,
+            0,
+            JointCommand {
+                position: Some(1.0),
+                stiffness: Some(1.0),
+            },
+        );
+        core.pre_process(&mut dcm);
+        // The HAL goes and another starts, between two cycles: the old target is not resumed.
+        link.set_commanding(false);
+        link.set_commanding(true);
+        let sent = dcm.commands().len();
+        core.pre_process(&mut dcm);
+        core.pre_process(&mut dcm);
+        assert_eq!(dcm.commands().len(), sent, "{:?}", dcm.commands());
+    }
+
+    #[test]
+    fn overlapping_led_groups_apply_in_the_order_written() {
+        let mut dcm = FakeDcm::nao(&[]);
+        let (mut core, link) = create(&dcm, "Arora", &DcmRobotConfig::default()).unwrap();
+        link.set_commanding(true);
+        assert_eq!(link.led_groups(), ["ChestLeds", "AllLeds"]);
+        {
+            let mut pending = lock(&link.shared.pending);
+            let led = |color, order| LedCommand {
+                color: Some(color),
+                intensity: None,
+                order,
+            };
+            // AllLeds blue, then ChestLeds red: the chest ends red.
+            pending.leds.insert(1, led(0x0000FF, 1));
+            pending.leds.insert(0, led(0xFF0000, 2));
+        }
+        core.pre_process(&mut dcm);
+        let aliases: Vec<String> = dcm.commands().into_iter().map(|(a, _, _)| a).collect();
+        assert_eq!(aliases, ["Arora/AllLeds", "Arora/ChestLeds"]);
     }
 
     #[test]

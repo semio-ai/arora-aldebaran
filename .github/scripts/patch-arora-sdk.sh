@@ -33,7 +33,16 @@ for package in json.load(sys.stdin)["packages"]:
         print("%s = { path = \"%s\" }" % (name, path))
 ' "$publishable"
 } >> Cargo.toml
-cargo update --workspace
+# The patched crates the lockfile holds are unlocked too: a patch at another version than
+# the locked one (arora-sdk's main past a release) is otherwise left unused.
+locked=$(sed -n 's/^name = "\(.*\)"$/\1/p' Cargo.lock | sort -u)
+update=(--workspace)
+for name in $publishable; do
+  if grep -qxF "$name" <<< "$locked"; then
+    update+=(-p "$name")
+  fi
+done
+cargo update "${update[@]}"
 cargo metadata --format-version 1 --all-features | python3 -c '
 import json, sys
 wanted = set(sys.argv[1].split())

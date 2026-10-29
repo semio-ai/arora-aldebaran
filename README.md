@@ -411,7 +411,8 @@ flowchart TB
   steps each commanded joint toward its target, at most at `joint_speed_limit` (1 rad/s by
   default), and a joint first commanded starts from where it is.
 - When the HAL starts, it turns Autonomous Life off and puts the robot to rest
-  (`ALMotion.rest`): `ALMotion` then sends the joints no command, and they are the device's.
+  (`ALMotion.rest`): `ALMotion` then sends the joints no command, and they are the device's;
+  a robot that does not rest fails the start, rather than have both command its joints.
   When it goes (NAOqi stops, or the device fails), the plugin stops commanding and the robot
   rests again. Something that wakes `ALMotion` up (Choregraphe, `ALMotion.wakeUp`) takes the
   joints back.

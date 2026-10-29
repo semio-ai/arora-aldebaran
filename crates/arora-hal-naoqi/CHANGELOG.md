@@ -18,8 +18,9 @@ All notable changes to `arora-hal-naoqi`. The format follows
 ### Added
 
 - `services`: the NAOqi service calls the HAL makes besides its keys (`connect`,
-  `required_service`, `disable_autonomous_life`, `rest`, `Sonar`, `describe`), for the DCM
-  HAL to make them too.
+  `required_service`, `disable_autonomous_life`, `rest` and the fallible `try_rest`, `Sonar`,
+  `describe`), for the DCM HAL to make them too.
+- `arora_f64`, public: the number an Arora value holds, as the HAL reads its commands.
 - `JointTable`, public: the joints, their Arora ids and their `ALMemory` keys.
 - `Voice::new`: the voice of an `ALTextToSpeech`.
 - `rest_on_exit` (on by default): when the HAL goes, the runner's exit included, it puts

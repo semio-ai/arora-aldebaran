@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use arora_hal::{Hal, HalDescription, HalResult, UpdatesStream};
 use arora_hal_naoqi::services::{self, Node, Sonar};
-use arora_hal_naoqi::{keys, NaoqiRobotError, Voice};
+use arora_hal_naoqi::{arora_f64, keys, NaoqiRobotError, Voice};
 use arora_types::data::{Key, State, StateChange};
 use arora_types::value::Value;
 use async_trait::async_trait;
@@ -74,7 +74,13 @@ impl DcmHal {
             services::disable_autonomous_life(&node).await;
         }
         if config.rest_at_start {
-            services::rest(&motion).await;
+            // The joints are the device's only once ALMotion stays out: a HAL whose robot did
+            // not rest does not start, rather than command against ALMotion.
+            services::try_rest(&motion).await.map_err(|error| {
+                NaoqiRobotError::Connection(format!(
+                    "the robot did not rest, ALMotion may still command its joints: {error}"
+                ))
+            })?;
         }
         let sonar = if config.sensors.sonar {
             Sonar::subscribe(&node).await
@@ -144,7 +150,7 @@ impl DcmHal {
                         warn!("The joint {joint} has no actuator: {key} is ignored");
                         continue;
                     }
-                    let Some(number) = number(value) else {
+                    let Some(number) = arora_f64(value) else {
                         warn!("Ignoring a non-numeric {key}");
                         continue;
                     };
@@ -162,7 +168,7 @@ impl DcmHal {
                         warn!("The robot has no LED group {group}: {key} is ignored");
                         continue;
                     };
-                    let Some(number) = number(value) else {
+                    let Some(number) = arora_f64(value) else {
                         warn!("Ignoring a non-numeric {key}");
                         continue;
                     };
@@ -182,6 +188,9 @@ impl DcmHal {
                 _ => {}
             }
         }
+        // The state is locked first, through both updates: concurrent writes update the
+        // commands and the cache in the same order.
+        let mut state = lock(&shared.state);
         {
             let mut pending = lock(&shared.pending);
             for (index, command) in joints {
@@ -190,30 +199,22 @@ impl DcmHal {
                 merged.stiffness = command.stiffness.or(merged.stiffness);
             }
             for (index, command) in leds {
+                // Groups overlap (AllLeds, ChestLeds): the plugin applies them in the order
+                // they were written.
+                pending.led_writes += 1;
+                let order = pending.led_writes;
                 let merged = pending.leds.entry(index).or_default();
                 merged.color = command.color.or(merged.color);
                 merged.intensity = command.intensity.or(merged.intensity);
+                merged.order = order;
             }
         }
-        let mut state = lock(&shared.state);
         for (key, value) in &changes.set {
             state.set(key.clone(), value.clone());
         }
         for key in &changes.unset {
             state.unset(key);
         }
-    }
-}
-
-fn number(value: &Value) -> Option<f64> {
-    match value {
-        Value::F64(number) => Some(*number),
-        Value::F32(number) => Some(f64::from(*number)),
-        Value::I64(number) => Some(*number as f64),
-        Value::I32(number) => Some(f64::from(*number)),
-        Value::U64(number) => Some(*number as f64),
-        Value::U32(number) => Some(f64::from(*number)),
-        _ => None,
     }
 }
 

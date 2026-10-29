@@ -22,7 +22,7 @@ pub use config::{
 };
 
 mod conversions;
-pub use conversions::{keys, JointTable};
+pub use conversions::{arora_f64, keys, JointTable};
 
 mod naoqi_error;
 pub use naoqi_error::NaoqiRobotError;

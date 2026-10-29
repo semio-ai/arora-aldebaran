@@ -87,11 +87,26 @@ pub async fn disable_autonomous_life(node: &Node) {
 /// relaxed, and `ALMotion` sends no more commands until it is woken up. Waits up to
 /// [`REST_TIMEOUT`]; a failure is warned.
 pub async fn rest(motion: &AnyObject) {
+    if let Err(error) = try_rest(motion).await {
+        warn!("{error}");
+    }
+}
+
+/// As [`rest`], failing when `ALMotion.rest` fails or does not end in [`REST_TIMEOUT`]: for
+/// a HAL that drives the joints only once `ALMotion` stays out.
+pub async fn try_rest(motion: &AnyObject) -> Result<(), NaoqiRobotError> {
     info!("Putting the robot to rest");
     match tokio::time::timeout(REST_TIMEOUT, motion.call::<(), _, _>("rest", ())).await {
-        Ok(Ok(())) => info!("The robot is at rest"),
-        Ok(Err(error)) => warn!("ALMotion.rest failed: {error}"),
-        Err(_) => warn!("The robot did not reach its rest posture in time"),
+        Ok(Ok(())) => {
+            info!("The robot is at rest");
+            Ok(())
+        }
+        Ok(Err(error)) => Err(NaoqiRobotError::Write(format!(
+            "ALMotion.rest failed: {error}"
+        ))),
+        Err(_) => Err(NaoqiRobotError::Write(
+            "the robot did not reach its rest posture in time".to_string(),
+        )),
     }
 }
 

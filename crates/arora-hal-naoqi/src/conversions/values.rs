@@ -1,8 +1,8 @@
 use arora_types::value::Value as AroraValue;
 use qi::value::Value as QiValue;
 
-/// The number held by an Arora value, if numeric.
-pub(crate) fn arora_f64(value: &AroraValue) -> Option<f64> {
+/// The number held by an Arora value, if numeric (a boolean is 0 or 1).
+pub fn arora_f64(value: &AroraValue) -> Option<f64> {
     Some(match value {
         AroraValue::F64(v) => *v,
         AroraValue::F32(v) => f64::from(*v),

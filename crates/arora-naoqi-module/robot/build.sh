@@ -20,7 +20,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 SDK=$(cd "${1:?usage: build.sh <NAOqi C++ SDK> [i686|x86_64]}" && pwd)
 ARCH=${2:-i686}
-FEATURES=${FEATURES:-studio}
+# An empty FEATURES (`FEATURES=`) builds without Studio: only an unset one defaults.
+FEATURES=${FEATURES-studio}
 GLIBC=${GLIBC:-2.13}
 TARGET="$ARCH-unknown-linux-gnu"
 case "$ARCH" in
@@ -46,7 +47,7 @@ export "CXX_${TARGET//-/_}=$HERE/g++.sh"
 # libstdc++ and libgcc_s NAOqi has loaded.
 export "CXXSTDLIB_${TARGET//-/_}="
 export CARGO_PROFILE_RELEASE_DEBUG=${CARGO_PROFILE_RELEASE_DEBUG:-0}
-(cd "$ROOT" && cargo zigbuild --release -p arora-naoqi-module --features "bridge,$FEATURES" \
+(cd "$ROOT" && cargo zigbuild --release -p arora-naoqi-module --features "bridge${FEATURES:+,$FEATURES}" \
   --target "$TARGET.$GLIBC")
 
 OUT="$ROOT/dist/arora-naoqi-$ARCH"
