@@ -82,17 +82,18 @@ impl DcmHal {
                 ))
             })?;
         }
-        let sonar = if config.sensors.sonar {
-            Sonar::subscribe(&node).await
-        } else {
-            None
-        };
         let known = HalDescription {
             model_family: config.model_family.clone(),
             hardware_version: config.hardware_version.clone(),
             software_version: config.software_version.clone(),
         };
         let description = services::describe(&known, &node, &memory, &motion).await;
+        // Last of the steps that may be cancelled: no subscription is left without a HAL.
+        let sonar = if config.sensors.sonar {
+            Sonar::subscribe(&node).await
+        } else {
+            None
+        };
         let unknown = || "unknown".to_string();
         info!(
             "DCM HAL started: {} robot, hardware {}, NAOqi {}, {} joints",

@@ -96,10 +96,13 @@ pub fn request_ready() -> anyhow::Result<()> {
 }
 
 /// The device's thread. Dropping it stops the device and waits for it, up to
-/// [`STOP_TIMEOUT`]: the robot is put to rest, unless the configuration says otherwise.
+/// [`STOP_TIMEOUT`]: the robot is put to rest, unless the configuration says otherwise. A
+/// thread that does not stop in time is left running: the library stays loaded under it, as
+/// `qi::module` keeps the library of a module NAOqi loaded (`RTLD_NODELETE`).
 pub struct Device {
     stop: Option<oneshot::Sender<()>>,
     done: mpsc::Receiver<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Device {
@@ -108,7 +111,7 @@ impl Device {
         let (stop, stopped) = oneshot::channel();
         let (finished, done) = mpsc::channel();
         state().link = Some(link.clone());
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("arora".to_string())
             .spawn(move || {
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -125,6 +128,7 @@ impl Device {
         Ok(Self {
             stop: Some(stop),
             done,
+            thread: Some(thread),
         })
     }
 }
@@ -134,8 +138,14 @@ impl Drop for Device {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
-        if self.done.recv_timeout(STOP_TIMEOUT).is_err() {
-            warn!("The Arora device did not stop in time, it is left running");
+        match self.done.recv_timeout(STOP_TIMEOUT) {
+            // Done: the thread only returns, and is joined.
+            Ok(()) => {
+                if let Some(thread) = self.thread.take() {
+                    let _ = thread.join();
+                }
+            }
+            Err(_) => warn!("The Arora device did not stop in time, it is left running"),
         }
     }
 }

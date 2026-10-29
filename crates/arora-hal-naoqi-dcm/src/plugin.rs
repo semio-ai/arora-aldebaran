@@ -531,8 +531,12 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
             }
         }
         if let Some(mut pending) = try_lock(&self.shared.pending) {
-            let pending = std::mem::take(&mut *pending);
-            for (index, command) in pending.joints {
+            // The commands only: the count of LED writes goes on ordering the next ones after
+            // those the DCM may refuse now, which are retried.
+            let joints = std::mem::take(&mut pending.joints);
+            let leds = std::mem::take(&mut pending.leds);
+            drop(pending);
+            for (index, command) in joints {
                 if let Some(actuators) = self
                     .joints
                     .get_mut(index)
@@ -546,7 +550,7 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
                     }
                 }
             }
-            for (index, command) in pending.leds {
+            for (index, command) in leds {
                 if let Some(led) = self.leds.get_mut(index) {
                     if let Some(color) = command.color {
                         led.color = color;
@@ -560,8 +564,10 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
             }
         }
 
+        // Positions are applied at once, a step at most as long as the speed limit allows over
+        // the time since the last cycle: a DCM ramp toward the next one would be replaced
+        // before its end by a late cycle's, from a setpoint the plugin does not know.
         let step = self.speed_limit * period.as_secs_f32();
-        let delay = (period.as_millis() as u32).max(1);
         let mut refusals = Vec::new();
         for joint in &mut self.joints {
             let Some(actuators) = joint.actuators.as_mut() else {
@@ -582,22 +588,26 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
             if stiffening {
                 actuators.commanded = None;
             }
-            let (commanded, delay) = match actuators.commanded {
-                None => (joint.position.get(), 0),
-                Some(commanded) => (commanded, delay),
-            };
+            let commanded = actuators.commanded.unwrap_or_else(|| joint.position.get());
             let next = match actuators.target {
                 Some(target) => commanded + (target - commanded).clamp(-step, step),
                 None => commanded,
             };
+            let mut anchored = true;
             if actuators.commanded != Some(next) {
-                match commands.send(&actuators.position, delay, &[next]) {
+                match commands.send(&actuators.position, 0, &[next]) {
                     Ok(()) => actuators.commanded = Some(next),
-                    Err(error) => refusals.push(error),
+                    Err(error) => {
+                        anchored = false;
+                        refusals.push(error);
+                    }
                 }
             }
             if let Some(stiffness) = actuators.stiffness_target {
-                if actuators.stiffness_sent != Some(stiffness) {
+                // A joint is stiffened only once its position is where it is: until then, its
+                // actuator may hold an old command. Relaxing it needs no position.
+                let deferred = stiffening && !anchored;
+                if actuators.stiffness_sent != Some(stiffness) && !deferred {
                     let stiffness = stiffness.clamp(0.0, 1.0);
                     match commands.send(&actuators.stiffness, self.stiffness_ramp_ms, &[stiffness])
                     {
@@ -651,6 +661,8 @@ pub(crate) mod fake {
         pub aliases: Shared<(String, Vec<String>)>,
         /// Every command: alias, delay and values.
         pub commands: Shared<(String, u32, Vec<f32>)>,
+        /// The aliases whose commands the DCM refuses.
+        pub refused: Shared<String>,
     }
 
     pub struct FakeSensor(Arc<AtomicU32>);
@@ -721,6 +733,9 @@ pub(crate) mod fake {
 
     impl Commands<String> for FakeDcm {
         fn send(&mut self, alias: &String, delay_ms: u32, values: &[f32]) -> Result<(), String> {
+            if lock(&self.refused).contains(alias) {
+                return Err(format!("{alias} refused"));
+            }
             lock(&self.commands).push((alias.clone(), delay_ms, values.to_vec()));
             Ok(())
         }
@@ -1042,6 +1057,69 @@ mod tests {
         core.pre_process(&mut dcm);
         let aliases: Vec<String> = dcm.commands().into_iter().map(|(a, _, _)| a).collect();
         assert_eq!(aliases, ["Arora/AllLeds", "Arora/ChestLeds"]);
+    }
+
+    #[test]
+    fn a_joint_is_not_stiffened_until_its_position_is_anchored() {
+        let mut dcm = FakeDcm::nao(&["HeadYaw"]);
+        let (mut core, link) = create(&dcm, "Arora", &DcmRobotConfig::default()).unwrap();
+        link.set_commanding(true);
+        lock(&dcm.refused).push("Arora/HeadYaw/Position".to_string());
+        command(
+            &link,
+            0,
+            JointCommand {
+                position: None,
+                stiffness: Some(1.0),
+            },
+        );
+        core.pre_process(&mut dcm);
+        assert!(dcm.commands().is_empty(), "{:?}", dcm.commands());
+        // Once the DCM takes the position, the stiffness follows.
+        lock(&dcm.refused).clear();
+        core.pre_process(&mut dcm);
+        let aliases: Vec<String> = dcm.commands().into_iter().map(|(a, _, _)| a).collect();
+        assert_eq!(
+            aliases,
+            ["Arora/HeadYaw/Position", "Arora/HeadYaw/Stiffness"]
+        );
+    }
+
+    #[test]
+    fn positions_are_applied_at_once_within_the_speed_limit() {
+        let mut dcm = FakeDcm::nao(&["HeadYaw"]);
+        let (mut core, link) = create(&dcm, "Arora", &DcmRobotConfig::default()).unwrap();
+        link.set_commanding(true);
+        command(
+            &link,
+            0,
+            JointCommand {
+                position: Some(1.0),
+                stiffness: None,
+            },
+        );
+        core.pre_process(&mut dcm);
+        std::thread::sleep(Duration::from_millis(30));
+        core.pre_process(&mut dcm);
+        let commands = dcm.commands();
+        // No ramp for the DCM to replace: each step is applied at once, and is at most the
+        // speed limit (1 rad/s) over the time since the previous cycle.
+        assert!(
+            commands.iter().all(|(_, delay, _)| *delay == 0),
+            "{commands:?}"
+        );
+        let step = commands[1].2[0] - commands[0].2[0];
+        assert!(step > 0.0 && step <= 0.05 + 1e-6, "{commands:?}");
+    }
+
+    #[test]
+    fn led_writes_stay_ordered_across_cycles() {
+        let mut dcm = FakeDcm::nao(&[]);
+        let (mut core, link) = create(&dcm, "Arora", &DcmRobotConfig::default()).unwrap();
+        link.set_commanding(true);
+        lock(&link.shared.pending).led_writes = 7;
+        core.pre_process(&mut dcm);
+        assert_eq!(lock(&link.shared.pending).led_writes, 7);
     }
 
     #[test]
