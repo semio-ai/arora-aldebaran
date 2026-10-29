@@ -29,10 +29,3 @@ codegen-units = 1
 # 32-bit x86): optimized for speed.
 [profile.robot.package.pulley-interpreter]
 opt-level = 3
-
-# The module support of libqi-vibe (`qi::module`, its DCM plugins), merged on its main and not
-# released yet: `arora-hal-naoqi-dcm` and `arora-naoqi-module` need it, and every crate of the
-# workspace builds with the same libqi-vibe, so that their qi types are one.
-[patch.crates-io]
-libqi-vibe = { git = "https://github.com/victorpaleologue/libqi-rs-vibe", rev = "e92e74ec27077225d990125f483af51f968b32e1" }
-libqi-macros-vibe = { git = "https://github.com/victorpaleologue/libqi-rs-vibe", rev = "e92e74ec27077225d990125f483af51f968b32e1" }

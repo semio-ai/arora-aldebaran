@@ -19,7 +19,7 @@ async-trait = "0.1"
 futures = "0.3"
 log = "0.4"
 # `module`: the DCM plugins of `qi::module::naoqi`, which give the loop of the DCM.
-qi = { package = "libqi-vibe", version = "1", features = ["module"] }
+qi = { package = "libqi-vibe", version = "1.1", features = ["module"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # rt-multi-thread: dropping the HAL waits for the robot to rest (`block_in_place`).

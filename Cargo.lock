@@ -2828,8 +2828,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libqi-macros-vibe"
-version = "1.0.0"
-source = "git+https://github.com/victorpaleologue/libqi-rs-vibe?rev=e92e74ec27077225d990125f483af51f968b32e1#e92e74ec27077225d990125f483af51f968b32e1"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4f2f110dd92efd21f04376a8151d818b891bcc1296cd455049af611fb33274f"
 dependencies = [
  "convert_case 0.10.0",
  "proc-macro2",
@@ -2839,8 +2840,9 @@ dependencies = [
 
 [[package]]
 name = "libqi-vibe"
-version = "1.0.0"
-source = "git+https://github.com/victorpaleologue/libqi-rs-vibe?rev=e92e74ec27077225d990125f483af51f968b32e1#e92e74ec27077225d990125f483af51f968b32e1"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7018c93e6d1b72457371094d475f56144fe2982858df854ebc159a0a4bb5508"
 dependencies = [
  "async-stream",
  "async-trait",

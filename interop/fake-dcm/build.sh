@@ -9,8 +9,8 @@
 # - libarora_naoqi.so: the library, with the bridge to the DCM built against the stub's headers
 #   only, as for a robot: its NAOqi symbols resolve in the process that loads it.
 #
-# Variables: LIBQI_RS_VIBE, a checkout of libqi-rs-vibe (else the revision the workspace
-# patches libqi-vibe to is cloned in build/); CXX; CARGO_FLAGS.
+# Variables: LIBQI_RS_VIBE, a checkout of libqi-rs-vibe (else the release of the libqi-vibe
+# of Cargo.lock is cloned in build/); CXX; CARGO_FLAGS.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -18,7 +18,7 @@ OUT="$HERE/build"
 CXX=${CXX:-g++}
 mkdir -p "$OUT"
 if [ -z "$LIBQI_RS_VIBE" ]; then
-  REV=$(sed -n 's/^libqi-vibe = .*rev = "\([0-9a-f]*\)".*/\1/p' "$ROOT/Cargo.toml")
+  REV=v$(sed -n '/^name = "libqi-vibe"$/{n;s/^version = "\(.*\)"$/\1/p}' "$ROOT/Cargo.lock")
   LIBQI_RS_VIBE="$OUT/libqi-rs-vibe"
   if [ ! -d "$LIBQI_RS_VIBE/.git" ]; then
     git clone --quiet https://github.com/victorpaleologue/libqi-rs-vibe "$LIBQI_RS_VIBE"
