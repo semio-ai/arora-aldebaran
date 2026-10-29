@@ -10,37 +10,17 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::{debug, info, warn};
-use qi::value::{Dynamic, KeyDynValueMap, Value as QiValue};
+use qi::value::{Dynamic, Value as QiValue};
 use qi::{AnyObject, ObjectExt};
 use tokio::task::AbortHandle;
 
 use crate::config::NaoqiRobotConfig;
-use crate::conversions::{arora_f64, identity, keys, qi_f64, qi_list, JointTable};
+use crate::conversions::{arora_f64, keys, qi_f64, qi_list, JointTable};
 use crate::naoqi_error::NaoqiRobotError;
-
-type Node = qi::node::Node<qi::service_directory::Client>;
+use crate::services::{self, required_service, Node, Sonar};
 
 /// How long dropping the HAL waits for the robot to stop moving and release its sonars.
 const STOP_TIMEOUT: Duration = Duration::from_secs(1);
-
-/// How long dropping the HAL waits for the robot to reach its rest posture. Giving up
-/// cancels the call, which leaves the robot where it got to: the wait is generous.
-const REST_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// A name of its own for each HAL subscribing to `ALSonar`, so that one HAL going does not
-/// turn off the sonars another one, on the same robot, still reads.
-fn sonar_subscriber_name() -> String {
-    static HALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_nanos())
-        .unwrap_or_default();
-    format!(
-        "arora-naoqi-{}-{nanos}-{}",
-        std::process::id(),
-        HALS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    )
-}
 
 /// A NAOqi robot (NAO, Pepper) as an [`arora_hal::Hal`], driven through the `qi` framework.
 ///
@@ -57,8 +37,8 @@ pub struct NaoqiHal {
     inner: Arc<Inner>,
     /// Feeds the queued-write task.
     outbound: UnboundedSender<StateChange>,
-    /// Feeds the voice's task, which says and stops in the order asked.
-    speech: UnboundedSender<Speech>,
+    /// The robot's voice, which says and stops in the order asked.
+    voice: Voice,
     /// The sampling, event and queued-write tasks, aborted with the HAL: a command still
     /// queued when the HAL goes is not sent.
     tasks: Vec<AbortHandle>,
@@ -77,9 +57,9 @@ struct Inner {
     motion: AnyObject,
     tts: AnyObject,
     leds: Option<AnyObject>,
-    /// `ALSonar` and the name the HAL subscribed to it under: the sonars measure only while
-    /// someone is subscribed.
-    sonar: Option<(AnyObject, String)>,
+    /// The HAL's subscription to `ALSonar`: the sonars measure only while someone is
+    /// subscribed.
+    sonar: Option<Sonar>,
     joints: JointTable,
     description: HalDescription,
     /// The current state: sampled sensors, received events and cached commands.
@@ -123,14 +103,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-async fn required_service(node: &Node, name: &str) -> Result<AnyObject, NaoqiRobotError> {
-    node.service(name).await.map_err(|error| {
-        NaoqiRobotError::Connection(format!(
-            "the NAOqi service {name} is not available: {error}"
-        ))
-    })
-}
-
 impl NaoqiHal {
     /// Connects to the robot described by the configuration and starts driving it.
     ///
@@ -139,27 +111,12 @@ impl NaoqiHal {
     /// queued-write tasks. Must be called within a Tokio runtime that outlives the HAL.
     pub async fn new(config: NaoqiRobotConfig) -> Result<Self, NaoqiRobotError> {
         config.validate()?;
-        // A host name may resolve to several addresses (IPv6 and IPv4), not all reachable: the
-        // node tries them in order.
-        let addresses = qi::Address::resolve_all(&config.url).map_err(|error| {
-            NaoqiRobotError::Connection(format!("invalid address {}: {error}", config.url))
-        })?;
-        let credentials = config.password.as_ref().map(|password| {
-            let mut credentials = KeyDynValueMap::new();
-            credentials.set(
-                "auth_user",
-                config.user.clone().unwrap_or_else(|| "nao".to_string()),
-            );
-            credentials.set("auth_token", password.clone());
-            credentials
-        });
-        let node = qi::node::init()
-            .connect_to_space_at(addresses, credentials)
-            .start()
-            .await
-            .map_err(|error| {
-                NaoqiRobotError::Connection(format!("cannot connect to {}: {error}", config.url))
-            })?;
+        let node = services::connect(
+            &config.url,
+            config.user.as_deref(),
+            config.password.as_deref(),
+        )
+        .await?;
 
         let memory = required_service(&node, "ALMemory").await?;
         let motion = required_service(&node, "ALMotion").await?;
@@ -172,9 +129,14 @@ impl NaoqiHal {
             }
         };
         if config.disable_autonomous_life {
-            disable_autonomous_life(&node).await;
+            services::disable_autonomous_life(&node).await;
         }
-        let description = describe(&config, &node, &memory, &motion).await;
+        let known = HalDescription {
+            model_family: config.model_family.clone(),
+            hardware_version: config.hardware_version.clone(),
+            software_version: config.software_version.clone(),
+        };
+        let description = services::describe(&known, &node, &memory, &motion).await;
         let names: Vec<String> = motion
             .call("getBodyNames", "Body".to_string())
             .await
@@ -185,7 +147,7 @@ impl NaoqiHal {
         // Last of the steps that may fail the start, so that a failed start leaves no
         // subscription behind.
         let sonar = if config.sensors.sonar {
-            subscribe_to_sonar(&node).await
+            Sonar::subscribe(&node).await
         } else {
             None
         };
@@ -261,14 +223,12 @@ impl NaoqiHal {
                 }
             }
         });
-        // The voice's task; it ends once every voice handed out is gone.
-        let (speech, speech_rx) = futures::channel::mpsc::unbounded();
-        tokio::spawn(speak(inner.tts.clone(), speech_rx));
+        let voice = Voice::new(inner.tts.clone());
 
         Ok(Self {
             inner,
             outbound,
-            speech,
+            voice,
             tasks,
             writer: Some(writer),
             runtime: tokio::runtime::Handle::current(),
@@ -278,10 +238,7 @@ impl NaoqiHal {
     /// The robot's voice (`ALTextToSpeech`), for the `Say` leaves: hand it to
     /// [`say::install`](crate::say::install).
     pub fn voice(&self) -> Voice {
-        Voice {
-            speech: self.speech.clone(),
-            runtime: self.runtime.clone(),
-        }
+        self.voice.clone()
     }
 }
 
@@ -302,6 +259,17 @@ enum Speech {
 }
 
 impl Voice {
+    /// The voice of `tts`, an `ALTextToSpeech`. Must be called within a Tokio runtime: the
+    /// voice speaks from a task of it, which ends once every clone of the voice is gone.
+    pub fn new(tts: AnyObject) -> Self {
+        let (speech, speech_rx) = futures::channel::mpsc::unbounded();
+        tokio::spawn(speak(tts, speech_rx));
+        Self {
+            speech,
+            runtime: tokio::runtime::Handle::current(),
+        }
+    }
+
     /// Start saying `text`; the returned utterance tells when it has been said.
     pub(crate) fn say(&self, text: String) -> Utterance {
         let utterance = Utterance::default();
@@ -393,121 +361,6 @@ impl Utterance {
             Some(true) => Status::Success,
             Some(false) => Status::Failure,
         }
-    }
-}
-
-/// Turns Autonomous Life off, so that the robot's own life does not move the joints the
-/// device drives. A robot without the service, or a refusal, leaves it as it is, warned.
-async fn disable_autonomous_life(node: &Node) {
-    let life = match node.service("ALAutonomousLife").await {
-        Ok(life) => life,
-        Err(error) => {
-            warn!("ALAutonomousLife is not available, Autonomous Life is left as is: {error}");
-            return;
-        }
-    };
-    let state: String = match life.call::<String, _, _>("getState", ()).await {
-        Ok(state) => state,
-        Err(error) => {
-            warn!("ALAutonomousLife.getState failed, Autonomous Life is left as is: {error}");
-            return;
-        }
-    };
-    if state == "disabled" {
-        return;
-    }
-    match life
-        .call::<(), _, _>("setState", "disabled".to_string())
-        .await
-    {
-        Ok(()) => info!("Autonomous Life turned off (it was {state})"),
-        Err(error) => warn!("ALAutonomousLife.setState(\"disabled\") failed: {error}"),
-    }
-}
-
-/// Subscribes to `ALSonar`, which turns the sonars on. A robot without the service, or a
-/// refusal, leaves the sonar keys to whoever else turned them on, warned.
-async fn subscribe_to_sonar(node: &Node) -> Option<(AnyObject, String)> {
-    let sonar = match node.service("ALSonar").await {
-        Ok(sonar) => sonar,
-        Err(error) => {
-            warn!("ALSonar is not available, the sonars may not measure: {error}");
-            return None;
-        }
-    };
-    let name = sonar_subscriber_name();
-    match sonar.call::<(), _, _>("subscribe", name.clone()).await {
-        Ok(()) => Some((sonar, name)),
-        Err(error) => {
-            warn!("ALSonar.subscribe failed, the sonars may not measure: {error}");
-            None
-        }
-    }
-}
-
-/// The HAL description, from the configuration or queried from the robot.
-async fn describe(
-    config: &NaoqiRobotConfig,
-    node: &Node,
-    memory: &AnyObject,
-    motion: &AnyObject,
-) -> HalDescription {
-    let memory_string = |key: &'static str| async move {
-        memory
-            .call::<String, _, _>("getData", key.to_string())
-            .await
-            .ok()
-    };
-    let model_family = match &config.model_family {
-        Some(family) => Some(family.clone()),
-        None => {
-            let robot_type = match node.service("ALRobotModel").await {
-                Ok(model) => model.call::<String, _, _>("getRobotType", ()).await.ok(),
-                Err(_) => None,
-            };
-            // NAOqi 2.1's ALRobotModel has no getRobotType; ALMemory has the type on every
-            // version.
-            let robot_type = match robot_type {
-                Some(robot_type) => Some(robot_type),
-                None => memory_string("RobotConfig/Body/Type").await,
-            };
-            robot_type.map(|robot_type| identity::model_family(&robot_type))
-        }
-    };
-    let software_version = match &config.software_version {
-        Some(version) => Some(version.clone()),
-        None => match node.service("ALSystem").await {
-            Ok(system) => system.call::<String, _, _>("systemVersion", ()).await.ok(),
-            Err(_) => None,
-        },
-    };
-    let hardware_version = match &config.hardware_version {
-        Some(version) => Some(version.clone()),
-        None => {
-            let body_type = match motion
-                .call::<Dynamic<QiValue<'static>>, _, _>("getRobotConfig", ())
-                .await
-            {
-                Ok(Dynamic(robot_config)) => {
-                    identity::robot_config_entry(robot_config, "Model Type")
-                }
-                Err(_) => None,
-            };
-            identity::hardware_version(
-                memory_string("RobotConfig/Body/BaseVersion")
-                    .await
-                    .as_deref(),
-                memory_string("RobotConfig/Head/BaseVersion")
-                    .await
-                    .as_deref(),
-                body_type.as_deref(),
-            )
-        }
-    };
-    HalDescription {
-        model_family,
-        hardware_version,
-        software_version,
     }
 }
 
@@ -857,7 +710,7 @@ impl Hal for NaoqiHal {
 /// velocity command persists in NAOqi, so a robot left moving would keep moving without its
 /// controller, and a robot left stiff would keep its joints powered. Within a
 /// multi-threaded runtime the drop waits for all that, up to [`STOP_TIMEOUT`] for the base
-/// and the sonars and [`REST_TIMEOUT`] for the rest; elsewhere it is done from a task of the
+/// and the sonars and [`REST_TIMEOUT`](services::REST_TIMEOUT) for the rest; elsewhere it is done from a task of the
 /// HAL's runtime.
 impl Drop for NaoqiHal {
     fn drop(&mut self) {
@@ -897,26 +750,10 @@ impl Drop for NaoqiHal {
                 warn!("NAOqi did not answer in time: the base may still move");
             }
             if inner.config.rest_on_exit {
-                info!("Putting the robot to rest");
-                match tokio::time::timeout(REST_TIMEOUT, inner.motion.call::<(), _, _>("rest", ()))
-                    .await
-                {
-                    Ok(Ok(())) => info!("The robot is at rest"),
-                    Ok(Err(error)) => warn!("ALMotion.rest failed: {error}"),
-                    Err(_) => warn!("The robot did not reach its rest posture in time"),
-                }
+                services::rest(&inner.motion).await;
             }
-            if let Some((sonar, name)) = &inner.sonar {
-                let released = tokio::time::timeout(
-                    STOP_TIMEOUT,
-                    sonar.call::<(), _, _>("unsubscribe", name.clone()),
-                )
-                .await;
-                match released {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => warn!("ALSonar.unsubscribe failed: {error}"),
-                    Err(_) => warn!("NAOqi did not answer in time: the sonars still measure"),
-                }
+            if let Some(sonar) = &inner.sonar {
+                sonar.unsubscribe(STOP_TIMEOUT).await;
             }
         };
         let multi_threaded = tokio::runtime::Handle::try_current().is_ok_and(|current| {

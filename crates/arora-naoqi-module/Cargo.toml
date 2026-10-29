@@ -1,0 +1,45 @@
+[package]
+name = "arora-naoqi-module"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/semio-ai/arora-aldebaran"
+description = "An Aldebaran robot (NAO, Pepper) as an Arora device inside NAOqi: a library NAOqi loads, running Arora on the DCM HAL"
+publish = false
+
+[lib]
+# The library of the qi module `arora_naoqi` must be `libarora_naoqi.so`.
+name = "arora_naoqi"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The C++ bridge to NAOqi's DCM (libqi-vibe's `module-naoqi`), built against the C++ SDK of
+# NAOqi that the QI_MODULE_NAOQI_SDK environment variable names. Without it, NAOqi loads the
+# library and its `Arora` service, but has no DCM plugin to run the device on.
+bridge = ["qi/module-naoqi"]
+# The Semio Studio connection (arora's `studio-bridge`): the device connects to Studio unless
+# its configuration sets `"studio": false`.
+studio = ["arora/studio-bridge"]
+
+[dependencies]
+anyhow = "1"
+arora = "16"
+arora-aldebaran = { path = "../arora-aldebaran" }
+arora-hal = "4"
+arora-hal-naoqi = { path = "../arora-hal-naoqi" }
+arora-hal-naoqi-dcm = { path = "../arora-hal-naoqi-dcm" }
+arora-simple-data-store = "3.1"
+arora-types = "3"
+clap = { version = "4", features = ["derive", "env"] }
+env_logger = "0.11"
+libc = "0.2"
+log = "0.4"
+qi = { package = "libqi-vibe", version = "1", features = ["module"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+fake-naoqi = { path = "../fake-naoqi" }
+qi = { package = "libqi-vibe", version = "1" }

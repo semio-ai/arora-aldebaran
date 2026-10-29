@@ -7,13 +7,16 @@ behavior tree on it, and serves it to Arora's bridges, Semio Studio included. Th
 chosen when the runner is built ([Choosing a HAL](#choosing-a-hal)); the default one,
 [`naoqi`](#the-naoqi-hal), talks to the robot's NAOqi with
 [`libqi-vibe`](https://crates.io/crates/libqi-vibe), a Rust implementation of the `qi`
-framework: no C++ SDK. The runner works two ways:
+framework: no C++ SDK. The runner works two ways, and the device a third:
 
 - **From your computer**, the quickest way to try it: it builds like any Rust program and
   drives the robot over the network, through NAOqi's port 9559.
   [Try it on a NAO](#try-it-on-a-nao).
 - **On the robot itself**, where the device runs on its own, with no computer attached.
   [Deploy it on the robot](#deploy-it-on-the-robot).
+- **Inside NAOqi**, as a library NAOqi loads at its start: the device drives the joints from
+  the loop of the DCM, every 10 ms, with no network in between.
+  [Inside NAOqi](#inside-naoqi-on-the-loop-of-the-dcm).
 
 The second way is the remarkable one. Arora is written in Rust, so the whole device (the
 runtime, its behavior trees, its WebAssembly modules, its Semio Studio connection)
@@ -28,6 +31,7 @@ computer, and stay on a separate machine that drives the robot over the network.
 - [Behaviors](#behaviors)
 - [Choosing a HAL](#choosing-a-hal)
 - [The NAOqi HAL](#the-naoqi-hal)
+- [Inside NAOqi, on the loop of the DCM](#inside-naoqi-on-the-loop-of-the-dcm)
 - [The repository](#the-repository)
 
 ## Try it on a NAO
@@ -274,10 +278,12 @@ The runner drives the robot through the HAL its build selects, with a cargo feat
 | Feature | HAL | Reaches the robot through | Status |
 |---|---|---|---|
 | `naoqi` (default) | [`arora-hal-naoqi`](crates/arora-hal-naoqi) | NAOqi's services, over the network: `ALMemory`, `ALMotion`, `ALLeds`, `ALTextToSpeech` | runs; from a computer or on the robot |
-| `dcm` | `arora-hal-naoqi-dcm` | the DCM's loop, every 10 ms, from a module NAOqi loads | planned: needs the NAOqi C++ SDK |
+| none: a library, not the runner | [`arora-hal-naoqi-dcm`](crates/arora-hal-naoqi-dcm) | the DCM's loop, every 10 ms, from the library NAOqi loads ([`arora-naoqi-module`](crates/arora-naoqi-module)) | runs in a fake NAOqi; [not yet on a robot](#its-status) |
 
 Every HAL maps the same [keys](#keys) and gives the same leaves, so trees, modules and the
 command line do not change with it: only what names the robot (the first argument) may.
+The DCM HAL runs in NAOqi's process, so it is not the runner's: the library NAOqi loads runs
+the device on it ([Inside NAOqi](#inside-naoqi-on-the-loop-of-the-dcm)).
 A build without a HAL is refused at compile time. In code, `arora_aldebaran::robot::connect`
 is the HAL the build selects: a new HAL adds its feature and its `connect` there.
 
@@ -362,12 +368,141 @@ simulated NAOqi. NAOqi 2.1 is older, and this HAL has not run on it yet:
   uses `ALMotion.setAngles`, `setStiffnesses`, `rest`, `ALTextToSpeech.say` and `stopAll`,
   all present in NAOqi 2.1.
 
+## Inside NAOqi, on the loop of the DCM
+
+The device can also run inside NAOqi: `libarora_naoqi.so`
+([`arora-naoqi-module`](crates/arora-naoqi-module)) is a library NAOqi loads at its start,
+from its `autoload.ini`, like the C++ DCM plugins of Aldebaran's documentation. It is a `qi`
+module written with [`libqi-vibe`](https://crates.io/crates/libqi-vibe)'s `#[qi::module]`,
+and runs the same device as the runner, on the DCM HAL
+([`arora-hal-naoqi-dcm`](crates/arora-hal-naoqi-dcm)):
+
+```mermaid
+flowchart TB
+  ini["autoload.ini"] -- dlopen --> lib["libarora_naoqi.so: _createModule"]
+  subgraph naoqi["the process of NAOqi"]
+    lib --> plugin
+    lib --> device
+    subgraph dcm["the thread of the DCM, every 10 ms"]
+      plugin["AroraDcm, an ALModule"]
+      post["post_process: reads the sensors in ALMemory"]
+      pre["pre_process: sends the commands with DCM aliases"]
+      plugin --> post
+      plugin --> pre
+    end
+    subgraph arora["the thread of the device, at its own pace (20 ms)"]
+      hal["DcmHal"]
+      device["Arora: trees, leaves, modules, bridges"]
+      hal -- updates --> device
+      device -- writes --> hal
+    end
+    post -- what changed --> hal
+    hal -- latest commands --> pre
+    device -- "qi: ALTextToSpeech, ALMotion.rest, ALAutonomousLife" --> services["NAOqi's services"]
+  end
+```
+
+- Right after the DCM updates the sensors, the plugin reads them in place in `ALMemory` and
+  sends what changed to the HAL's feeds, which the device reads at its next step. Right
+  before the DCM computes its orders, it sends the latest commands of the device to the
+  actuators. It never waits on the device: a cycle that finds the HAL's state locked leaves
+  its change to the next one.
+- The DCM applies a position at once, where `ALMotion.setAngles` interpolates: the plugin
+  steps each commanded joint toward its target, at most at `joint_speed_limit` (1 rad/s by
+  default), and a joint first commanded starts from where it is.
+- When the HAL starts, it turns Autonomous Life off and puts the robot to rest
+  (`ALMotion.rest`): `ALMotion` then sends the joints no command, and they are the device's.
+  When it goes (NAOqi stops, or the device fails), the plugin stops commanding and the robot
+  rests again. Something that wakes `ALMotion` up (Choregraphe, `ALMotion.wakeUp`) takes the
+  joints back.
+- What is not a key goes through NAOqi's services, with `qi`: the voice (`Say`),
+  Autonomous Life, the rest postures, the sonars (`ALSonar`) and the description.
+- The service `Arora` reports what the device does, from anywhere on the network:
+  `qicli call Arora.status` (`running`, or why not), `Arora.cycles`, `Arora.joints`, and
+  `Arora.ready`, which plays the default behavior again, as the runner's `r` key.
+
+The keys are those of [the NAOqi HAL](#keys), with these differences: every sensor is read
+every cycle of the DCM (touch sensors and bumpers included, from their DCM values rather than
+`ALMemory` events); LED groups are those of `ALLeds` the plugin drives through the DCM
+(`FaceLeds`, `LeftFaceLeds`, `RightFaceLeds`, `ChestLeds`, `FeetLeds`, `LeftFootLeds`,
+`RightFootLeds`, `EarLeds`, `LeftEarLeds`, `RightEarLeds`, `BrainLeds`, `AllLeds`; a
+single-color LED takes the brightest component of the color); the base velocity keys are
+ignored (the DCM does not walk). The plugin probes the robot's joints, sensors and LEDs when
+NAOqi creates it, so one library serves NAO and Pepper.
+
+### Build it
+
+The library is built on Linux for the robot's computer (`i686` for a NAO V4 or V5) and its
+system: the glibc 2.13 of NAOqi 2.1, and the C++ runtime NAOqi loads. Its bridge to the DCM
+is C++, built against the headers of the C++ SDK of the robot's NAOqi
+(`naoqi-sdk-2.1.4.13-linux32` for NAOqi 2.1; its libraries are not linked, they resolve in
+NAOqi). It needs [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild) and
+Docker (GCC 4.8, as old as the libstdc++ of NAOqi 2.1):
+
+```bash
+crates/arora-naoqi-module/robot/build.sh <path to the NAOqi C++ SDK>
+```
+
+The package is `dist/arora-naoqi-i686/`: `lib/libarora_naoqi.so`, a sample configuration
+(`arora_naoqi.json`) and the line of `autoload.ini`. The script checks what the library needs
+of the robot: no glibc symbol newer than 2.12, and no C++ symbol that is not NAOqi's, its
+Boost's or in the libstdc++ of GCC 4.8. `FEATURES=` builds it without Semio Studio (it is in
+by default).
+
+### Install it
+
+```bash
+scp -r dist/arora-naoqi-i686 nao@<robot_name>.local:
+ssh nao@<robot_name>.local
+cp naoqi/preferences/autoload.ini naoqi/preferences/autoload.ini.before-arora
+printf '[user]\n/home/nao/arora-naoqi-i686/lib/libarora_naoqi.so\n' >> naoqi/preferences/autoload.ini
+nao restart
+```
+
+If `autoload.ini` already has a `[user]` section, add the line to it instead. NAOqi logs the
+device's start; `qicli call Arora.status` then says `running`. To remove it, put
+`autoload.ini.before-arora` back and `nao restart`.
+
+### Configure it
+
+`arora_naoqi.json`, beside the library or in its parent directory (or the file
+`ARORA_NAOQI_CONFIG` names), configures the device; every field is optional:
+
+| Field | Default | Is |
+|---|---|---|
+| `tree` | `ready` | the behavior: `ready` ([the default behavior](#the-default-behavior)), `touch`, `none`, or the path of a Groot XML file |
+| `device`, `device_dir`, `bridge_port`, `modules` | as the runner's | the device: `--device`, `--device-dir`, `--bridge-port` and `--module` of the runner |
+| `studio` | `true` in a library built with Studio | `false` serves the open local bridge |
+| `log` | `info` | the log filter, as `RUST_LOG` |
+| `robot.joint_speed_limit` | 1.0 | the fastest a commanded joint moves, in rad/s |
+| `robot.stiffness_ramp_ms` | 100 | how long a stiffness command takes to reach its value |
+| `robot.rest_at_start`, `robot.rest_on_exit` | `true` | put the robot to rest when the HAL starts, and when it goes |
+| `robot.disable_autonomous_life` | `true` | turn Autonomous Life off when the HAL starts |
+| `robot.joint_ids`, `robot.sensors` | as the NAOqi HAL's | [its configuration](#configuration) |
+| `robot.url`, `robot.user`, `robot.password` | `tcp://127.0.0.1:9559`, none | the NAOqi the HAL calls for what is not a key |
+
+### Its status
+
+The library runs in a fake NAOqi (`crates/arora-naoqi-module/tests/fake_dcm.rs`): a process
+that loads it as NAOqi does, with a stub of the C++ SDK, and runs the loop of a DCM with the
+memory of a NAO, the NAOqi services being `fake-naoqi`'s. There the default behavior plays
+from the loop of the DCM, and the robot rests when NAOqi destroys the plugin. It has not run
+on a robot yet, nor been built against the real C++ SDK; what that may change is in the
+[test plan](crates/arora-naoqi-module/robot-test-plan.md).
+
+```bash
+interop/fake-dcm/build.sh                       # the fake NAOqi, the stub SDK and the library
+cargo test -p arora-naoqi-module --test fake_dcm
+```
+
 ## The repository
 
 | Crate | Is |
 |---|---|
 | [`arora-aldebaran`](crates/arora-aldebaran) | The runner (`arora-aldebaran`), its HAL selection (`robot`), its trees and the gesture leaves |
-| [`arora-hal-naoqi`](crates/arora-hal-naoqi) | The NAOqi HAL, its configuration, the robot standard and its keys, and its voice (`Say`) |
+| [`arora-hal-naoqi`](crates/arora-hal-naoqi) | The NAOqi HAL, its configuration, the robot standard and its keys, its voice (`Say`), and the NAOqi services both HALs call (`services`) |
+| [`arora-hal-naoqi-dcm`](crates/arora-hal-naoqi-dcm) | The DCM HAL: its plugin in the loop of the DCM and the HAL the device runs on |
+| [`arora-naoqi-module`](crates/arora-naoqi-module) | The library NAOqi loads (`libarora_naoqi.so`), running the device on the DCM HAL, and its robot build (`robot/`) (not published) |
 | [`fake-naoqi`](crates/fake-naoqi) | A fake NAOqi hosted in process, which the tests drive the HAL and the device against (not published) |
 
 The crates build against the published Arora crates from
@@ -375,7 +510,7 @@ The crates build against the published Arora crates from
 (`rust-toolchain.toml`):
 
 ```bash
-cargo test --workspace                                  # the HAL and the device, against a fake NAOqi
+cargo test --workspace                                  # the HALs and the device, against a fake NAOqi
 cargo test -p arora-aldebaran --features studio --bins  # the runner built with Studio
 ```
 

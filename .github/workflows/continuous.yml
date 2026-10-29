@@ -47,7 +47,9 @@ jobs:
       - name: Build each crate alone
         run: |
           cargo build -p arora-hal-naoqi
+          cargo build -p arora-hal-naoqi-dcm
           cargo build -p arora-aldebaran
+          cargo build -p arora-naoqi-module
 
       - name: Test
         run: cargo test --workspace
@@ -55,8 +57,17 @@ jobs:
       - name: Test (studio)
         run: cargo test -p arora-aldebaran --features studio --bins
 
-  # The NAO cross-build of `arora-aldebaran` is not exercised here: it takes a
-  # cross toolchain and half an hour. See README.md#deploy-it-on-the-robot.
+      # The library NAOqi loads, with its bridge to the DCM, in a fake NAOqi: the stub of the
+      # NAOqi C++ SDK (from libqi-rs-vibe) needs the Boost headers.
+      - name: Test in a fake NAOqi
+        run: |
+          sudo apt-get update && sudo apt-get install -y libboost-dev
+          interop/fake-dcm/build.sh
+          ARORA_INTEROP_REQUIRE=1 cargo test -p arora-naoqi-module --test fake_dcm
+
+  # The NAO cross-builds of `arora-aldebaran` and of the library NAOqi loads are not
+  # exercised here: they take a cross toolchain (and the NAOqi C++ SDK) and half an hour.
+  # See README.md#deploy-it-on-the-robot and README.md#build-it.
 
   # The crates against arora-sdk's main rather than the published Arora crates, so a
   # change there that breaks the HAL shows before it is released. Daily and on

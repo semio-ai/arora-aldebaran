@@ -24,3 +24,5 @@ rustc-ice-*.txt
 #.idea/
 
 /.claude/
+/interop/fake-dcm/build
+/dist
