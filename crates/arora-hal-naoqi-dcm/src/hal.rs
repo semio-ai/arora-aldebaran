@@ -151,8 +151,9 @@ impl DcmHal {
                         warn!("The joint {joint} has no actuator: {key} is ignored");
                         continue;
                     }
-                    let Some(number) = arora_f64(value) else {
-                        warn!("Ignoring a non-numeric {key}");
+                    // A NaN or an infinity is no position, stiffness or LED level.
+                    let Some(number) = arora_f64(value).filter(|n| (*n as f32).is_finite()) else {
+                        warn!("Ignoring a non-numeric or non-finite {key}");
                         continue;
                     };
                     let mut command = JointCommand::default();
@@ -169,8 +170,9 @@ impl DcmHal {
                         warn!("The robot has no LED group {group}: {key} is ignored");
                         continue;
                     };
-                    let Some(number) = arora_f64(value) else {
-                        warn!("Ignoring a non-numeric {key}");
+                    // A NaN or an infinity is no position, stiffness or LED level.
+                    let Some(number) = arora_f64(value).filter(|n| (*n as f32).is_finite()) else {
+                        warn!("Ignoring a non-numeric or non-finite {key}");
                         continue;
                     };
                     let mut command = LedCommand::default();
@@ -356,6 +358,11 @@ mod tests {
         change
             .set
             .insert(Key::from("velocity.x"), Some(Value::F64(0.5)));
+        // Ignored: the chest's green stays at full intensity below.
+        change.set.insert(
+            Key::from("led.ChestLeds.intensity"),
+            Some(Value::F64(f64::NAN)),
+        );
         hal.write(change).await.unwrap();
         assert_eq!(
             hal.read(&[Key::from("head_yaw.target_position")])

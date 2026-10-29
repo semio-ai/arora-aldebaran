@@ -48,6 +48,17 @@ const NOMINAL_PERIOD: Duration = Duration::from_millis(10);
 /// The longest step a joint takes in one cycle, however late the cycle: a stalled DCM does
 /// not make the next command jump.
 const MAX_PERIOD: Duration = Duration::from_millis(50);
+/// How long stopping the commands waits for a cycle under way, which takes microseconds.
+const STOP_WAIT: Duration = Duration::from_millis(100);
+
+/// Marks a `pre_process` as sending, until it ends (or panics).
+struct Sending<'a>(&'a AtomicBool);
+
+impl Drop for Sending<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 
 /// A joint command the HAL received, applied at the next cycle. Each field is the latest
 /// value written.
@@ -93,6 +104,8 @@ pub(crate) struct Shared {
     pub commanding: AtomicBool,
     /// The HALs started on the link: the plugin forgets the commands of the previous one.
     pub generation: AtomicU64,
+    /// Whether the plugin's `pre_process` runs: stopping the commands waits for it to end.
+    pub sending: AtomicBool,
     /// The cycles of the DCM run.
     pub cycles: AtomicU64,
     /// The commands the DCM refused.
@@ -170,15 +183,25 @@ impl DcmLink {
         self.shared.commanding.load(Ordering::Acquire)
     }
 
+    /// Lets the plugin send the HAL's commands, or stops it. Stopping returns once no cycle
+    /// sends any more, waiting for one under way (up to [`STOP_WAIT`]), so that what follows
+    /// (the rest posture) is not raced by a command. Never called from the DCM's thread.
     pub(crate) fn set_commanding(&self, commanding: bool) {
         if commanding {
             // A new HAL: the plugin forgets the targets and commands of the previous one.
-            self.shared.generation.fetch_add(1, Ordering::AcqRel);
-        } else {
-            // Commands written meanwhile are not applied later by another HAL.
-            *lock(&self.shared.pending) = Pending::default();
+            self.shared.generation.fetch_add(1, Ordering::SeqCst);
+            self.shared.commanding.store(true, Ordering::SeqCst);
+            return;
         }
-        self.shared.commanding.store(commanding, Ordering::Release);
+        // Commands written meanwhile are not applied later by another HAL.
+        *lock(&self.shared.pending) = Pending::default();
+        self.shared.commanding.store(false, Ordering::SeqCst);
+        // A cycle that saw the commands on sends until it ends: the DCM's thread never waits,
+        // this one does, briefly.
+        let since = Instant::now();
+        while self.shared.sending.load(Ordering::SeqCst) && since.elapsed() < STOP_WAIT {
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 }
 
@@ -432,6 +455,7 @@ pub(crate) fn create<P: Probe>(
         pending: Mutex::new(Pending::default()),
         commanding: AtomicBool::new(false),
         generation: AtomicU64::new(0),
+        sending: AtomicBool::new(false),
         cycles: AtomicU64::new(0),
         refused: AtomicU64::new(0),
     });
@@ -517,7 +541,11 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
             .map_or(NOMINAL_PERIOD, |then| now.duration_since(then))
             .min(MAX_PERIOD);
         self.last_pre_process = Some(now);
-        if !self.shared.commanding.load(Ordering::Acquire) {
+        // Marked before the commands are checked: a stop that sees no cycle sending is not
+        // followed by one that saw the commands on.
+        self.shared.sending.store(true, Ordering::SeqCst);
+        let _sending = Sending(&self.shared.sending);
+        if !self.shared.commanding.load(Ordering::SeqCst) {
             return;
         }
         let generation = self.shared.generation.load(Ordering::Acquire);
@@ -628,7 +656,12 @@ impl<S: Sensor, A: Send + 'static> Core<S, A> {
                 .collect();
             match commands.send(&led.alias, 0, &values) {
                 Ok(()) => led.dirty = false,
-                Err(error) => refusals.push(error),
+                Err(error) => {
+                    // The later groups wait for the refused one, retried first next cycle: a
+                    // retry never overwrites a newer group already sent.
+                    refusals.push(error);
+                    break;
+                }
             }
         }
         if !refusals.is_empty() {
@@ -1120,6 +1153,51 @@ mod tests {
         lock(&link.shared.pending).led_writes = 7;
         core.pre_process(&mut dcm);
         assert_eq!(lock(&link.shared.pending).led_writes, 7);
+    }
+
+    #[test]
+    fn a_refused_led_group_holds_back_the_later_ones() {
+        let mut dcm = FakeDcm::nao(&[]);
+        let (mut core, link) = create(&dcm, "Arora", &DcmRobotConfig::default()).unwrap();
+        link.set_commanding(true);
+        {
+            let mut pending = lock(&link.shared.pending);
+            let led = |color, order| LedCommand {
+                color: Some(color),
+                intensity: None,
+                order,
+            };
+            pending.leds.insert(1, led(0x0000FF, 1));
+            pending.leds.insert(0, led(0xFF0000, 2));
+        }
+        lock(&dcm.refused).push("Arora/AllLeds".to_string());
+        core.pre_process(&mut dcm);
+        assert!(dcm.commands().is_empty(), "{:?}", dcm.commands());
+        lock(&dcm.refused).clear();
+        core.pre_process(&mut dcm);
+        let aliases: Vec<String> = dcm.commands().into_iter().map(|(a, _, _)| a).collect();
+        assert_eq!(aliases, ["Arora/AllLeds", "Arora/ChestLeds"]);
+    }
+
+    #[test]
+    fn stopping_waits_for_a_cycle_under_way() {
+        let dcm = FakeDcm::nao(&["HeadYaw"]);
+        let (_core, link) = create(&dcm, "Arora", &DcmRobotConfig::default()).unwrap();
+        link.set_commanding(true);
+        link.shared.sending.store(true, Ordering::SeqCst);
+        let shared = Arc::clone(&link.shared);
+        let cycle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            shared.sending.store(false, Ordering::SeqCst);
+        });
+        let since = Instant::now();
+        link.set_commanding(false);
+        assert!(
+            since.elapsed() >= Duration::from_millis(25),
+            "{:?}",
+            since.elapsed()
+        );
+        cycle.join().unwrap();
     }
 
     #[test]
