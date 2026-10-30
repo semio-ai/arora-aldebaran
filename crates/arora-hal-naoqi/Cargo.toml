@@ -10,7 +10,7 @@ description = "NAOqi HAL for Arora: NAO and Pepper robots as Arora HALs, through
 name = "arora_hal_naoqi"
 
 [dependencies]
-arora-behavior = "9.1"
+arora-behavior = "10"
 arora-hal = "4"
 arora-module = "2.1"
 arora-types = "3"

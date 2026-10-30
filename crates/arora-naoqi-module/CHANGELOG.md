@@ -35,3 +35,8 @@ All notable changes to `arora-naoqi-module`. The format follows
 - `tests/fake_dcm.rs`: the library in a fake NAOqi (`interop/fake-dcm`), the 64-bit build or,
   with `interop/fake-dcm/build-i686.sh`, the robot's in a 32-bit process, built against the
   fake NAOqi's stub of the SDK (`NAOQI_SDK=interop/fake-dcm/build/sdk`).
+
+### Changed
+
+- On Arora 17 (was 16), with the other dependencies updated to their latest compatible
+  versions.

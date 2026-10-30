@@ -23,7 +23,7 @@ studio = ["arora/studio-bridge"]
 
 [dependencies]
 anyhow = "1"
-arora = "16"
+arora = "17"
 arora-aldebaran = { path = "../arora-aldebaran" }
 arora-hal = "4"
 arora-hal-naoqi = { path = "../arora-hal-naoqi" }

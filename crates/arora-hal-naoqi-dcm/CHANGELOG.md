@@ -16,3 +16,7 @@ All notable changes to `arora-hal-naoqi-dcm`. The format follows
   not start when the robot does not rest) and when it goes (`rest_at_start`, `rest_on_exit`), turns Autonomous Life off, subscribes to the
   sonars, and gives the robot's voice. `DcmRobotConfig` configures it. The plugin probes the
   joints, sensors and LEDs the robot has, from NAO's and Pepper's.
+
+### Changed
+
+- The dependencies are updated to their latest compatible versions.
