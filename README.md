@@ -435,22 +435,42 @@ NAOqi creates it, so one library serves NAO and Pepper.
 
 The library is built on Linux for the robot's computer (`i686` for a NAO V4 or V5) and its
 system: the glibc 2.13 of NAOqi 2.1, and the C++ runtime NAOqi loads. Its bridge to the DCM
-is C++, built against the headers of the C++ SDK of the robot's NAOqi
-(`naoqi-sdk-2.1.4.13-linux32` for NAOqi 2.1; its libraries are not linked, they resolve in
-NAOqi). It needs [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild) and
-Docker (GCC 4.8, as old as the libstdc++ of NAOqi 2.1):
+is C++, built against what it uses of the C++ SDK of NAOqi 2.1 (its `ALModule`, its DCM and
+`ALMemory` proxies), declared in
+[`crates/arora-naoqi-module/robot/naoqi-2.1/`](crates/arora-naoqi-module/robot/naoqi-2.1/README.md)
+with the SDK's ABI, and Boost 1.55: nothing of NAOqi to download. NAOqi's libraries are not
+linked: they resolve in NAOqi. It needs
+[`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild) and Docker (GCC 4.8 for the
+bridge):
 
 ```bash
-crates/arora-naoqi-module/robot/build.sh <path to the NAOqi C++ SDK>
+crates/arora-naoqi-module/robot/build.sh
 ```
+
+With the cross toolchain of NAOqi 2.1 (`ctc-linux64-atom-2.1.4.13`), `NAOQI_SDK=<its path>`
+builds the bridge against the SDK's own headers, and checks the symbols the library needs
+against the robot's libraries it holds; `robot/check-abi.sh <its path>` checks the declarations
+against the SDK (the bridge is the same built against either). Aldebaran published it on its
+downloads page (NAO V4/V5, NAOqi 2.1.4.13);
+[TheSocialRobot/NaoBuild](https://github.com/TheSocialRobot/NaoBuild) keeps a copy,
+`https://the-social-robot.s3.eu-west-2.amazonaws.com/nao-2.1.4.13/ctc-linux64-atom-2.1.4.13.zip`
+(362 MB, SHA-256 `6b72eb981268ab02add6c6e6a4c2b9721912e0a672605e81a645ce551e7ce2d2`). Only its
+headers and its libraries are read: nothing of it runs.
+
+The build is NAOqi 2.1's. Another NAOqi (2.5, 2.8 or 2.9) is another build: the Rust code is
+the same, but its system (glibc, the C++ runtime, maybe the architecture) and the ABI of its
+C++ SDK are not, so the bridge needs declarations of that SDK, checked against its toolchain.
 
 The package is `dist/arora-naoqi-i686/`: `lib/libarora_naoqi.so`, a sample configuration
 (`arora_naoqi.json`) and the line of `autoload.ini`. The script checks what the library needs
-of the robot: no glibc symbol newer than 2.12, and no C++ symbol that is not NAOqi's, its
-Boost's or in the libstdc++ of GCC 4.8. `FEATURES=` builds it without Semio Studio (it is in
-by default). It builds with the workspace's `robot` profile: release optimized for size,
-without debug information (about 41 MB, against 62 with `release`), its WebAssembly
-interpreter optimized for speed; `PROFILE=release` builds with release instead.
+of the robot: no glibc symbol newer than 2.12, no version of the C++ runtime newer than GCC
+4.5's (GLIBCXX_3.4.14, CXXABI_1.3.4, GCC_4.5.0), and no other symbol that the robot's libraries
+do not define: those of the cross toolchain when `NAOQI_SDK` names it (NAOqi's, Boost 1.55, the
+libstdc++ of GCC 4.5, libgcc_s, glibc), else the C++ runtime of GCC 4.5, by the versions of its
+symbols. `FEATURES=` builds it without Semio Studio (it is in by default). It builds with the
+workspace's `robot` profile: release optimized for size, without debug information (about
+41 MB, against 62 with `release`), its WebAssembly interpreter optimized for speed;
+`PROFILE=release` builds with release instead.
 
 ### Install it
 
@@ -489,8 +509,10 @@ device's start; `qicli call Arora.status` then says `running`. To remove it, put
 The library runs in a fake NAOqi (`crates/arora-naoqi-module/tests/fake_dcm.rs`): a process
 that loads it as NAOqi does, with a stub of the C++ SDK, and runs the loop of a DCM with the
 memory of a NAO, the NAOqi services being `fake-naoqi`'s. There the default behavior plays
-from the loop of the DCM, and the robot rests when NAOqi destroys the plugin. It has not run
-on a robot yet, nor been built against the real C++ SDK; what that may change is in the
+from the loop of the DCM, and the robot rests when NAOqi destroys the plugin. It builds
+against the declarations of `robot/naoqi-2.1/` and against the cross toolchain of NAOqi
+2.1.4.13, to the same bridge (`robot/check-abi.sh`), and every symbol it needs of the robot is
+in the robot's libraries there. It has not run on a robot yet; what that may change is in the
 [test plan](crates/arora-naoqi-module/robot-test-plan.md).
 
 ```bash
@@ -515,13 +537,4 @@ The crates build against the published Arora crates from
 ```bash
 cargo test --workspace                                  # the HALs and the device, against a fake NAOqi
 cargo test -p arora-aldebaran --features studio --bins  # the runner built with Studio
-```
-
-A daily CI job also builds and tests them against arora-sdk's `main`, so a change there that
-breaks them shows before it is released; locally:
-
-```bash
-export CARGO_UNSTABLE_BINDEPS=true                 # arora-sdk declares artifact dependencies
-.github/scripts/patch-arora-sdk.sh ../arora-sdk    # patches, and checks every crate is patched
-cargo test --workspace
 ```

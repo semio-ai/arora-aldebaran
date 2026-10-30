@@ -8,4 +8,4 @@ shift
 exec docker run --rm --network host -v /tmp:/tmp -v "$HERE:$HERE" \
   -v "$(dirname "$LIBRARY"):$(dirname "$LIBRARY")" \
   -e ARORA_NAOQI_CONFIG -e QI_URL -e HOME -e RUST_LOG \
-  arora-robot-gxx "$HERE/build/i686/fake-dcm" "$LIBRARY" "$@"
+  "$("$HERE/../../crates/arora-naoqi-module/robot/image.sh")" "$HERE/build/i686/fake-dcm" "$LIBRARY" "$@"

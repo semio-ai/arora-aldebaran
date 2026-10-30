@@ -4,7 +4,9 @@
 //!
 //! `ARORA_FAKE_DCM` and `ARORA_NAOQI_LIBRARY` name another harness and library: the 32-bit
 //! harness of `interop/fake-dcm/build-i686.sh` (`fake-dcm-i686.sh`) with the library a robot
-//! gets (`crates/arora-naoqi-module/robot/build.sh`).
+//! gets, built against the stub of the SDK of the fake NAOqi:
+//! `NAOQI_SDK=interop/fake-dcm/build/sdk crates/arora-naoqi-module/robot/build.sh` (whose check
+//! of symbols then fails: the stub's Boost.Signals2 needs a libstdc++ newer than NAOqi 2.1's).
 //!
 //! Skipped when they are not built, unless `ARORA_INTEROP_REQUIRE=1`.
 
