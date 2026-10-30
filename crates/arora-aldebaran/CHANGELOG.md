@@ -18,11 +18,10 @@ All notable changes to `arora-aldebaran`. The format follows
   `EndGestures`), which name the keys of the Arora robot standard only.
 - `EndGestures`: a leaf that ends a gesture episode, so the next `HandsReady` plays from its
   start; the default tree calls it, with `EndSpeech`, before handing the request back.
-- On arora 16, building with Semio Studio is the opt-in: the runner built with the `studio`
-  feature connects to Studio on every run unless it passes `--no-studio`, enrolling a
-  device that is not enrolled first (by a code entered in Studio, or
-  `STUDIO_ENROLLMENT_TOKEN`). `arora-naoqi`'s `--studio` and `ARORA_STUDIO` are gone; to
-  migrate, drop them, and build with `studio` a runner that should connect.
+- Building with Semio Studio is the opt-in: the runner built with the `studio` feature
+  serves the device's Studio bridge on every run unless it passes `--no-studio`.
+  `arora-naoqi`'s `--studio` and `ARORA_STUDIO` are gone; to migrate, drop them, and build
+  with `studio` a runner that should connect.
 - The runner takes `--device <NAME>`, `--device-dir <PATH>` and `--bridge-port <PORT>`
   (`ARORA_DEVICE`, `ARORA_DEVICE_DIR`, `ARORA_BRIDGE_PORT`): the device the run is, so
   several run on one machine. A device's Studio credential is kept under its name in
@@ -31,5 +30,18 @@ All notable changes to `arora-aldebaran`. The format follows
 
 ### Changed
 
-- On Arora 17 and `arora-behavior` 10 (were 16 and 9), with the other dependencies updated
-  to their latest compatible versions.
+- **Breaking:** on arora 18 (was 16): `Robot::install` takes and returns arora 18's
+  `AroraBuilder`. The runner built with `studio` runs the robot at once, with the device's
+  Studio bridge from its start, and a device that is not enrolled with Studio enrolls while
+  it runs (`StudioHandle::enroll_when_needed`): by the token in `STUDIO_ENROLLMENT_TOKEN`,
+  or by a code once a person accepts to enroll. The terminal UI asks whether to enroll, the
+  device's name and its model family, shows the code in its prompt line, then the device's
+  Studio record and id in its header; headless, the code is logged. A refused enrollment
+  fails the run, and so does a Studio bridge that halts, such as on a credential of another
+  Firebase project than the run's, the error naming the credentials directory to delete;
+  Studio out of reach no longer fails the run. To migrate: a caller of `Robot::install`
+  builds against arora 18; a script that waited for the run to enroll before relying on
+  Studio waits for the device to show in Studio instead; `--no-studio` and the credential
+  store are unchanged.
+- On `arora-behavior` 10 (was 9), with the other dependencies updated to their latest
+  compatible versions.

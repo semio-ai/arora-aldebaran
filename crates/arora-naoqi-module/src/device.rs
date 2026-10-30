@@ -191,17 +191,12 @@ async fn run(link: DcmLink, config: ModuleConfig) -> anyhow::Result<()> {
         .runner
         .device()?;
     let frontend = arora::operator::default_frontend();
+    #[cfg(feature = "studio")]
+    let enroller = frontend.operator.clone().enroller();
     let builder = Arora::builder()
         .with_frontend(frontend)
         .with_module_dirs(device.dir(), &config.modules)
-        .await?
-        .with_device(device);
-    #[cfg(feature = "studio")]
-    let builder = builder.with_studio(if config.studio == Some(false) {
-        arora::studio::Choice::Local
-    } else {
-        arora::studio::Choice::Studio
-    });
+        .await?;
     #[cfg(not(feature = "studio"))]
     if config.studio == Some(true) {
         warn!("This library is built without Semio Studio: the device serves the local bridge");
@@ -246,7 +241,20 @@ async fn run(link: DcmLink, config: ModuleConfig) -> anyhow::Result<()> {
     store.set_meta([(Key::from(COMMAND_READY), KeyMeta::new().editable())].into())?;
     state().store = Some(store.clone());
 
+    // Built with `studio`, the device's bridge is its Studio bridge, reporting the model the
+    // HAL describes, unless the configuration sets `"studio": false`; the device enrolls
+    // beside the run, unattended (by `STUDIO_ENROLLMENT_TOKEN`, else by a code it logs), the
+    // enrollment's end failing the run.
+    #[cfg(feature = "studio")]
+    let studio = if config.studio != Some(false) {
+        let model = arora::studio::reported_model(&hal.describe().await);
+        Some(arora::studio::of(&device)?.bridge(model))
+    } else {
+        None
+    };
+
     let mut builder = builder
+        .with_device(device)
         .with_hal(Box::new(hal))
         .with_host_module(HostModule::of::<naoqi_say::Module>())
         .with_data_store(Box::new(store))
@@ -256,6 +264,14 @@ async fn run(link: DcmLink, config: ModuleConfig) -> anyhow::Result<()> {
         builder = builder.with_groot(tree);
     }
     set_status(Status::Running);
+    #[cfg(feature = "studio")]
+    if let Some((bridge, handle)) = studio {
+        let run = builder.with_bridge(Box::new(bridge)).run();
+        return tokio::select! {
+            ran = run => ran,
+            ended = handle.enroll_when_needed(&*enroller) => Err(ended.into()),
+        };
+    }
     builder.run().await
 }
 

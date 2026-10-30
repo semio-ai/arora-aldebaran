@@ -25,11 +25,11 @@ studio = ["arora/studio-bridge"]
 
 [dependencies]
 anyhow = "1"
-# 16: `AroraBuilder::with_studio` and `studio::StudioArgs`, the run's Studio
-# choice, a run of a runner built with Studio connecting unless it passes
-# `--no-studio`; `RunnerArgs::device` and `AroraBuilder::with_device`, the
-# device's name, directory and local bridge port.
-arora = "17"
+# 18: `studio::of`, `StudioArgs::connects` and `Operator::enroller`, the
+# device's Studio bridge and its enrollment beside the run; `RunnerArgs::device`
+# and `AroraBuilder::with_device`, the device's name, directory and local bridge
+# port.
+arora = "18"
 arora-behavior = "10"
 arora-hal = "4"
 arora-hal-naoqi = { path = "../arora-hal-naoqi", version = "0.3", optional = true }
