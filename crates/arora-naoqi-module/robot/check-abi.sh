@@ -20,7 +20,9 @@ if [ "${1:-}" = --inside ]; then
   cd "$5"
   FLAGS=(-pthread -D_GLIBCXX_USE_CXX11_ABI=0 -DBOOST_SIGNALS_NO_DEPRECATION_WARNING -fPIC
     -ffunction-sections -fdata-sections -Wno-invalid-offsetof)
+  # The SDK's Boost, in include/boost-<version>, else the image's.
   BOOST=$(find "$SDK/include" -maxdepth 1 -name "boost-*" -type d | sort | tail -1)
+  SDK_INCLUDES=(-I"$SDK/include" ${BOOST:+-I"$BOOST"})
   failed=0
   # The probes: <name> <value> of each function probe_, from its `mov $value` (`xor` for 0).
   probes() {
@@ -34,25 +36,26 @@ if [ "${1:-}" = --inside ]; then
     readelf -SW "$1" | grep -oE '\.(text|data\.rel\.ro(\.local)?|rodata)\.[A-Za-z0-9_$.]+' |
       grep -vE '^\.text\.(startup|unlikely)|_GLOBAL__sub_I|__static_initialization_and_destruction' | sort -u
   }
-  # The content of a section: its code, or its data and relocations, without its addresses, and
-  # with the references to the local data of the object (string literals, statics) masked.
+  # The content of a section: its code, or its data and relocations, with the references to the
+  # local data of the object (string literals, statics) masked. Each function is a section of
+  # its own: its addresses, its branches' included, are from its start.
   content() {
     case "$2" in
       .text.*) objdump -dr --no-show-raw-insn -j "$2" "$1" | sed -n '/>:$/,$p' ;;
       *) objdump -sr -j "$2" "$1" | sed -n '/^RELOCATION\|^Contents/,$p' ;;
-    esac | sed -E 's/^[ \t]*[0-9a-f]+:[ \t]*//; s/[0-9a-f]+ <[^>]*>/<address>/g' |
+    esac |
       awk '/R_[A-Z0-9_]+[ \t]+\.(rodata|bss|data)/ { sub(/0x[0-9a-f]+/, "<local>", previous); sub(/\+0x[0-9a-f]+$/, "") }
            NR > 1 { print previous } { previous = $0 } END { print previous }'
   }
   for m in -m32 -m64; do
-    g++ $m "${FLAGS[@]}" -O2 -I"$SDK/include" -I"$BOOST" -c "$OURS/abi-probe.cpp" -o sdk-probe.o
+    g++ $m "${FLAGS[@]}" -O2 "${SDK_INCLUDES[@]}" -c "$OURS/abi-probe.cpp" -o sdk-probe.o
     g++ $m "${FLAGS[@]}" -O2 -I"$OURS/include" -c "$OURS/abi-probe.cpp" -o our-probe.o
     if ! diff <(probes sdk-probe.o) <(probes our-probe.o) > probes.diff; then
       echo "$m: layouts differ (< the SDK, > ours):" >&2; cat probes.diff >&2; failed=1
     else
       echo "$m: the $(probes our-probe.o | wc -l) sizes and offsets of the classes are the same"
     fi
-    g++ $m "${FLAGS[@]}" -O0 -I"$SDK/include" -I"$BOOST" -c "$SHIM" -o sdk.o
+    g++ $m "${FLAGS[@]}" -O0 "${SDK_INCLUDES[@]}" -c "$SHIM" -o sdk.o
     g++ $m "${FLAGS[@]}" -O0 -I"$OURS/include" -c "$SHIM" -o ours.o
     more=$(comm -13 <(nm -u sdk.o | awk '{print $2}' | sort) <(nm -u ours.o | awk '{print $2}' | sort))
     if [ -n "$more" ]; then

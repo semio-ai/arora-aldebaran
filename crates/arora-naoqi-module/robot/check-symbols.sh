@@ -46,7 +46,7 @@ docker run --rm --network none "${MOUNTS[@]}" "$("$(dirname "$0")/image.sh")" ba
       "$(readlink -f "$(g++ $m -print-file-name=libgcc_s.so.1)")" |
       awk "/ (GLIBCXX|CXXABI|GCC)_/ && !/\*UND\*/ {print \$NF, \$(NF - 1)}" | tr -d "()" > /tmp/versioned
     for newest in GLIBCXX_3.4.14 CXXABI_1.3.4 GCC_4.5.0; do
-      awk "{print \$2}" /tmp/versioned | grep "^${newest%%_*}_" | sort -uV |
+      { awk "{print \$2}" /tmp/versioned | grep "^${newest%%_*}_"; echo "$newest"; } | sort -uV |
         awk -v newest="$newest" "!past {print} \$0 == newest {past = 1}"
     done > /tmp/versions
     awk "NR == FNR {old[\$1]; next} \$2 in old {print \$1}" /tmp/versions /tmp/versioned |
