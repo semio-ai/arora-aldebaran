@@ -24,9 +24,9 @@ ls /usr/lib/libstdc++.so.6* /usr/lib/libboost_system* /usr/lib/libalcommon.so   
 cat /etc/naoqi-version 2>/dev/null
 ```
 
-Send back the output. The build checks the library against the libraries of the cross
-toolchain of NAOqi 2.1.4.13 (glibc 2.13, the libstdc++ of GCC 4.5, Boost 1.55): a robot on
-another NAOqi needs a build of its own.
+Send back the output. The build is for NAOqi 2.1 (glibc 2.13, the libstdc++ of GCC 4.5, Boost
+1.55), checked against what NAOqi 2.1.4.13 has: a robot on another NAOqi needs a build of its
+own.
 
 ## 1. Build
 

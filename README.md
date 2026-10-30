@@ -463,10 +463,11 @@ C++ SDK are not, so the bridge needs declarations of that SDK, checked against i
 
 The package is `dist/arora-naoqi-i686/`: `lib/libarora_naoqi.so`, a sample configuration
 (`arora_naoqi.json`) and the line of `autoload.ini`. The script checks what the library needs
-of the robot: no glibc symbol newer than 2.12, and no other symbol that the robot's libraries
+of the robot: no glibc symbol newer than 2.12, no version of the C++ runtime newer than GCC
+4.5's (GLIBCXX_3.4.14, CXXABI_1.3.4, GCC_4.5.0), and no other symbol that the robot's libraries
 do not define: those of the cross toolchain when `NAOQI_SDK` names it (NAOqi's, Boost 1.55, the
-libstdc++ of GCC 4.5, libgcc_s, glibc), else the C++ runtime of GCC 4.5 by its symbol versions
-(GLIBCXX_3.4.14, CXXABI_1.3.4, GCC_4.5.0). `FEATURES=` builds it without Semio Studio (it is in by default). It builds with the
+libstdc++ of GCC 4.5, libgcc_s, glibc), else the C++ runtime of GCC 4.5, by the versions of its
+symbols. `FEATURES=` builds it without Semio Studio (it is in by default). It builds with the
 workspace's `robot` profile: release optimized for size, without debug information (about
 41 MB, against 62 with `release`), its WebAssembly interpreter optimized for speed;
 `PROFILE=release` builds with release instead.
@@ -509,9 +510,9 @@ The library runs in a fake NAOqi (`crates/arora-naoqi-module/tests/fake_dcm.rs`)
 that loads it as NAOqi does, with a stub of the C++ SDK, and runs the loop of a DCM with the
 memory of a NAO, the NAOqi services being `fake-naoqi`'s. There the default behavior plays
 from the loop of the DCM, and the robot rests when NAOqi destroys the plugin. It builds
-against the cross toolchain of NAOqi 2.1.4.13, and every symbol it needs of the robot is in
-the robot's libraries there; built against the declarations of `robot/naoqi-2.1/` instead,
-its bridge is the same (`robot/check-abi.sh`). It has not run on a robot yet; what that may change is in the
+against the declarations of `robot/naoqi-2.1/` and against the cross toolchain of NAOqi
+2.1.4.13, to the same bridge (`robot/check-abi.sh`), and every symbol it needs of the robot is
+in the robot's libraries there. It has not run on a robot yet; what that may change is in the
 [test plan](crates/arora-naoqi-module/robot-test-plan.md).
 
 ```bash
