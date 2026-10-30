@@ -32,7 +32,9 @@ docker run --rm --network none "${MOUNTS[@]}" "$("$(dirname "$0")/image.sh")" ba
   # The versions of the C++ runtime it requires (when one is linked in) are no newer than the
   # robot'"'"'s, GCC 4.5'"'"'s, and it requires none of another library: the other symbols are
   # unversioned, resolved by name in the process.
-  objdump -T "$library" | awk "/\*UND\*/ && \$(NF - 1) ~ /^[A-Z]+_[0-9]/ && \$(NF - 1) !~ /^GLIBC_/ {print \$(NF - 1), \$NF}" |
+  # objdump prints a version in parentheses when it is not the default one.
+  objdump -T "$library" | awk "/\*UND\*/ {version = \$(NF - 1); gsub(/[()]/, \"\", version)
+      if (version ~ /^[A-Z]+_[0-9]/ && version !~ /^GLIBC_/) print version, \$NF}" |
     sort -u > /tmp/required
   too_new=$(while read -r version symbol; do
     case "$version" in
