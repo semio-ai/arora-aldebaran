@@ -7,8 +7,9 @@
 #   its cross toolchain), by those: NAOqi's libraries, their Boost, the robot's libstdc++,
 #   libgcc_s and glibc;
 # - else, NAOqi's (AL::, qi::, their typeinfos and vtables) and Boost's symbols are assumed
-#   there, and the others must be in the libstdc++ or libgcc_s of GCC 4.8 (whose newest
-#   version, GLIBCXX_3.4.19, the robot's must have).
+#   there (check-abi.sh checks the bridge needs no more of them with naoqi-2.1/ than with the
+#   SDK), and the others must be in the libstdc++ or libgcc_s of GCC 4.8 with a version the
+#   robot's of NAOqi 2.1 has (GCC 4.5's: GLIBCXX_3.4.14, CXXABI_1.3.4, GCC_4.5.0).
 #
 # Usage: check-symbols.sh <library> <-m32|-m64> [<robot library directory>...]
 set -euo pipefail
@@ -22,7 +23,7 @@ for dir in "$@"; do
   DIRS+=("$dir")
   MOUNTS+=(-v "$dir:$dir")
 done
-docker run --rm --network none "${MOUNTS[@]}" arora-robot-gxx bash -c '
+docker run --rm --network none "${MOUNTS[@]}" "$("$(dirname "$0")/image.sh")" bash -c '
   set -euo pipefail
   library=$1; m=$2; shift 2
   newest=$(objdump -T "$library" | grep -o "GLIBC_[0-9.]*" | sort -uV | tail -1)
@@ -37,10 +38,17 @@ docker run --rm --network none "${MOUNTS[@]}" arora-robot-gxx bash -c '
     done | awk "NF == 3 {print \$3}" | sed "s/@.*//" | sort -u > /tmp/defined
     assumed="^$"
   else
-    where="the libstdc++ or libgcc_s of GCC 4.8, NAOqi'"'"'s or its Boost"
+    where="the libstdc++ or libgcc_s of NAOqi 2.1 (GCC 4.5)"
+    # The symbols of GCC 4.8 that GCC 4.5 had: of a version no newer than the robot'"'"'s.
     nm -D --defined-only "$(readlink -f "$(g++ $m -print-file-name=libstdc++.so)")" \
       "$(readlink -f "$(g++ $m -print-file-name=libgcc_s.so.1)")" |
-      awk "NF == 3 {print \$3}" | sed "s/@.*//" | sort -u > /tmp/defined
+      awk "NF == 3 {print \$3}" | sed "s/@@*/ /" > /tmp/versioned
+    for newest in GLIBCXX_3.4.14 CXXABI_1.3.4 GCC_4.5.0; do
+      awk "{print \$2}" /tmp/versioned | grep "^${newest%%_*}_" | sort -uV |
+        sed "/^$newest\$/q"
+    done > /tmp/versions
+    awk "NR == FNR {old[\$1]; next} \$2 in old {print \$1}" /tmp/versions /tmp/versioned |
+      sort -u > /tmp/defined
     assumed="^_Z(T[ISV])?N?K?(2AL|2qi|5boost)"
   fi
   missing=0

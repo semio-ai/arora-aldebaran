@@ -5,9 +5,9 @@ and the joints move only from step 5. Each step says what to check and what to s
 it fails. Commands marked *(to confirm)* are assumptions about the robot's system that this
 plan could not check.
 
-Conventions: `NAO=<address of the robot>` on the computer. The library was so far built
-against a stub of the NAOqi C++ SDK and run in a fake NAOqi only
-([Its status](../../README.md#its-status)): this plan is its first run on a robot.
+Conventions: `NAO=<address of the robot>` on the computer. The library was so far run in a
+fake NAOqi only, on a stub of the NAOqi C++ SDK ([Its status](../../README.md#its-status)): this
+plan is its first run on a robot.
 
 It continues the plan of libqi-rs-vibe's modules (`docs/robot-test-plan.md` there): if the
 `rustexample` library of that plan already loaded in NAOqi (its step 5) and ran its DCM plugin
@@ -26,24 +26,37 @@ cat /etc/naoqi-version 2>/dev/null
 
 Send back the output. The build checks the library against the libraries of the cross
 toolchain of NAOqi 2.1.4.13 (glibc 2.13, the libstdc++ of GCC 4.5, Boost 1.55): a robot on
-another NAOqi needs the cross toolchain of its own.
+another NAOqi needs a build of its own.
 
-## 1. Build against the robot's cross toolchain
+## 1. Build
 
-On the computer, with the cross toolchain of the robot's NAOqi (`ctc-linux64-atom-2.1.4.13` for
-NAOqi 2.1; where to get it is in [Build it](../../README.md#build-it)):
+On the computer:
 
 ```sh
-crates/arora-naoqi-module/robot/build.sh <path to ctc-linux64-atom-2.1.4.13>
+crates/arora-naoqi-module/robot/build.sh
 ```
 
 - [ ] It builds, and ends with `newest glibc symbol version: GLIBC_2.12` and `every other symbol
-      it needs is in the robot's libraries`.
+      it needs is in the libstdc++ or libgcc_s of NAOqi 2.1 (GCC 4.5)`.
 
-This step passed on 2026-10-30 with `ctc-linux64-atom-2.1.4.13.zip` (SHA-256
-`6b72eb98…`): the bridge compiles against the real headers of NAOqi 2.1 and its Boost 1.55,
-and the robot's libraries (NAOqi's, the libstdc++ of GCC 4.5, glibc 2.13) define every symbol
-the library needs. If it fails for you, send the compiler errors or the missing symbols.
+With the cross toolchain of the robot's NAOqi (`ctc-linux64-atom-2.1.4.13` for NAOqi 2.1;
+where to get it is in [Build it](../../README.md#build-it)), the build can be checked against
+it:
+
+```sh
+crates/arora-naoqi-module/robot/check-abi.sh <path to ctc-linux64-atom-2.1.4.13>
+NAOQI_SDK=<path to ctc-linux64-atom-2.1.4.13> crates/arora-naoqi-module/robot/build.sh
+```
+
+- [ ] `check-abi.sh` ends with `the bridge has the same ... functions, vtables and typeinfos
+      with ours`, in 32 and 64 bits.
+- [ ] The build ends with `every other symbol it needs is in the robot's libraries`.
+
+Both passed on 2026-10-30 with `ctc-linux64-atom-2.1.4.13.zip` (SHA-256 `6b72eb98…`): the
+bridge compiles against the real headers of NAOqi 2.1 and its Boost 1.55, to the same code as
+against `robot/naoqi-2.1/`, and the robot's libraries (NAOqi's, the libstdc++ of GCC 4.5, glibc
+2.13) define every symbol the library needs. If a step fails for you, send the compiler errors,
+the differences or the missing symbols.
 
 ## 2. On the robot, outside NAOqi: the library loads
 
