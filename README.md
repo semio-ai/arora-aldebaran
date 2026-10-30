@@ -537,12 +537,3 @@ The crates build against the published Arora crates from
 cargo test --workspace                                  # the HALs and the device, against a fake NAOqi
 cargo test -p arora-aldebaran --features studio --bins  # the runner built with Studio
 ```
-
-A daily CI job also builds and tests them against arora-sdk's `main`, so a change there that
-breaks them shows before it is released; locally:
-
-```bash
-export CARGO_UNSTABLE_BINDEPS=true                 # arora-sdk declares artifact dependencies
-.github/scripts/patch-arora-sdk.sh ../arora-sdk    # patches, and checks every crate is patched
-cargo test --workspace
-```
