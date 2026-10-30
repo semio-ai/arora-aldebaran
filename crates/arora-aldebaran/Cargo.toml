@@ -29,8 +29,8 @@ anyhow = "1"
 # choice, a run of a runner built with Studio connecting unless it passes
 # `--no-studio`; `RunnerArgs::device` and `AroraBuilder::with_device`, the
 # device's name, directory and local bridge port.
-arora = "16"
-arora-behavior = "9.1"
+arora = "17"
+arora-behavior = "10"
 arora-hal = "4"
 arora-hal-naoqi = { path = "../arora-hal-naoqi", version = "0.3", optional = true }
 arora-module = "2.1"

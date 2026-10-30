@@ -32,6 +32,8 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ### Changed
 
+- **Breaking:** on `arora-behavior` 10 (was 9): `say`'s `Status` is arora-behavior 10's.
+  The other dependencies are updated to their latest compatible versions.
 - **Breaking:** `NaoqiRobotConfig::apply_overrides` takes a `NaoqiRobotConfigOverrides`.
   An override replaces exactly the fields it sets, even with their default value, and
   keeps the others: a credentials-only override no longer re-enables disabled sensors, and

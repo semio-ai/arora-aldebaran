@@ -28,3 +28,8 @@ All notable changes to `arora-aldebaran`. The format follows
   several run on one machine. A device's Studio credential is kept under its name in
   Semio's device store.
 - On exit, the robot goes to rest: the NAOqi HAL's `rest_on_exit`, on by default.
+
+### Changed
+
+- On Arora 17 and `arora-behavior` 10 (were 16 and 9), with the other dependencies updated
+  to their latest compatible versions.
