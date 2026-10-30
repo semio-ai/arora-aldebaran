@@ -36,16 +36,54 @@ if [ "${1:-}" = --inside ]; then
     readelf -SW "$1" | grep -oE '\.(text|data\.rel\.ro(\.local)?|rodata)\.[A-Za-z0-9_$.]+' |
       grep -vE '^\.text\.(startup|unlikely)|_GLOBAL__sub_I|__static_initialization_and_destruction' | sort -u
   }
-  # The content of a section: its code, or its data and relocations, with the references to the
-  # local data of the object (string literals, statics) masked. Each function is a section of
-  # its own: its addresses, its branches' included, are from its start.
+  # The content of a section: its code, or its data and relocations. Each function is a section
+  # of its own: its addresses, its branches' included, are from its start. The references to the
+  # object's local data, which is where the other literals and statics of the object put it, are
+  # resolved: to the string, for a string literal (from the instruction on i386, from the addend
+  # of the relocation on x86_64, PC-relative; a Boost header's path from <boost>/); to `<static>`
+  # for the statics, which the bridge's own code declares.
   content() {
-    case "$2" in
-      .text.*) objdump -dr --no-show-raw-insn -j "$2" "$1" | sed -n '/>:$/,$p' ;;
-      *) objdump -sr -j "$2" "$1" | sed -n '/^RELOCATION\|^Contents/,$p' ;;
+    local mode=data
+    case "$2" in .text.*) mode=text ;; esac
+    case "$mode" in
+      text) objdump -dr --no-show-raw-insn -j "$2" "$1" | sed -n '/>:$/,$p' ;;
+      data) objdump -sr -j "$2" "$1" | sed -n '/^RELOCATION\|^Contents/,$p' ;;
     esac |
-      awk '/R_[A-Z0-9_]+[ \t]+\.(rodata|bss|data)/ { sub(/0x[0-9a-f]+/, "<local>", previous); sub(/\+0x[0-9a-f]+$/, "") }
-           NR > 1 { print previous } { previous = $0 } END { print previous }'
+      awk -v mode=$mode -v strings="$1.strings" '
+        function hex(text,   i, value) {
+          value = 0; sub(/^0x/, "", text)
+          for (i = 1; i <= length(text); i++) value = value * 16 + index("0123456789abcdef", substr(text, i, 1)) - 1
+          return value
+        }
+        BEGIN {
+          while ((getline line < strings) > 0)
+            if (match(line, /^ *\[ *[0-9a-f]+\]  /)) {
+              offset = line; sub(/^ *\[ */, "", offset); sub(/\].*/, "", offset)
+              # Boost'"'"'s assertions name their header: the SDK'"'"'s Boost or the image'"'"'s.
+              text = substr(line, RLENGTH + 1); sub(/^[^ ]*\/include\/(boost-[0-9_]+\/)?boost\//, "<boost>/", text)
+              string[hex(offset)] = text
+            }
+        }
+        mode == "text" && /R_[A-Z0-9_]+[ \t]+\.rodata([+-]0x[0-9a-f]+)?$/ {
+          if (/R_386_/) {
+            match(previous, /0x[0-9a-f]+/); offset = hex(substr(previous, RSTART, RLENGTH))
+          } else {
+            offset = 0
+            if (match($0, /[+-]0x[0-9a-f]+$/)) {
+              addend = substr($0, RSTART); offset = hex(substr(addend, 2)); if (addend ~ /^-/) offset = -offset
+            }
+            if (/PC32/) offset += 4
+          }
+          target = (offset in string) ? "\"" string[offset] "\"" : "<local data>"
+          gsub(/&/, "\\\\&", target)
+          sub(/0x[0-9a-f]+/, target, previous)
+          sub(/[+-]0x[0-9a-f]+$/, "")
+        }
+        /R_[A-Z0-9_]+[ \t]+\.(bss|data)([+-]0x[0-9a-f]+)?$/ {
+          if (mode == "text") sub(/0x[0-9a-f]+/, "<static>", previous)
+          sub(/[+-]0x[0-9a-f]+$/, "")
+        }
+        NR > 1 { print previous } { previous = $0 } END { print previous }'
   }
   for m in -m32 -m64; do
     g++ $m "${FLAGS[@]}" -O2 "${SDK_INCLUDES[@]}" -c "$OURS/abi-probe.cpp" -o sdk-probe.o
@@ -57,6 +95,8 @@ if [ "${1:-}" = --inside ]; then
     fi
     g++ $m "${FLAGS[@]}" -O0 "${SDK_INCLUDES[@]}" -c "$SHIM" -o sdk.o
     g++ $m "${FLAGS[@]}" -O0 -I"$OURS/include" -c "$SHIM" -o ours.o
+    readelf -p .rodata sdk.o > sdk.o.strings 2>/dev/null || true
+    readelf -p .rodata ours.o > ours.o.strings 2>/dev/null || true
     more=$(comm -13 <(nm -u sdk.o | awk '{print $2}' | sort) <(nm -u ours.o | awk '{print $2}' | sort))
     if [ -n "$more" ]; then
       echo "$m: the bridge needs more symbols with ours:" >&2; echo "$more" | c++filt >&2; failed=1
@@ -71,6 +111,7 @@ if [ "${1:-}" = --inside ]; then
         same=$((same + 1))
       else
         echo "$m: differs: $section ($(echo "${section#.*.}" | sed -E 's/^(rel\.ro\.)?(local\.)?//' | c++filt))" >&2
+        diff <(content sdk.o "$section") <(content ours.o "$section") | head -6 >&2 || true
         failed=1
       fi
     done
