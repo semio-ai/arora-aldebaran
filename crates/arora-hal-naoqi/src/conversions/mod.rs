@@ -4,7 +4,8 @@ pub(crate) mod identity;
 pub mod keys;
 
 mod joints;
-pub(crate) use joints::JointTable;
+pub use joints::JointTable;
 
 mod values;
-pub(crate) use values::{arora_f64, qi_f64, qi_list};
+pub use values::arora_f64;
+pub(crate) use values::{qi_f64, qi_list};

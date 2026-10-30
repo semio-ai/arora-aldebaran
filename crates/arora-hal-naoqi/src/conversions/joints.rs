@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use crate::config::JointIdMapping;
 use crate::conversions::keys;
 
-/// The joints of the robot: NAOqi names, Arora ids and the `ALMemory` keys sampled for them.
+/// The joints of a robot: NAOqi names, Arora ids and the `ALMemory` keys sampled for them.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct JointTable {
+pub struct JointTable {
     /// NAOqi names, in the order of `ALMotion.getBodyNames("Body")`.
     names: Vec<String>,
     /// Arora ids, aligned with `names`.
@@ -25,7 +25,7 @@ impl JointTable {
     /// The robot's joints under the mapping. An empty id, an id with a `.` (a key separator),
     /// and two joints that end up with the same id are refused: each id must name one motor,
     /// for its sensor keys and its targets alike.
-    pub(crate) fn new(names: Vec<String>, mapping: &JointIdMapping) -> Result<Self, String> {
+    pub fn new(names: Vec<String>, mapping: &JointIdMapping) -> Result<Self, String> {
         let (names, ids): (Vec<String>, Vec<String>) = names
             .into_iter()
             .filter_map(|name| {
@@ -60,24 +60,39 @@ impl JointTable {
         Ok(Self { names, ids, by_id })
     }
 
-    pub(crate) fn len(&self) -> usize {
+    /// The number of joints.
+    pub fn len(&self) -> usize {
         self.names.len()
     }
 
+    /// Whether the table has no joint.
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// The index of a joint from its Arora id, in the order of [`JointTable::names`].
+    pub fn index(&self, id: &str) -> Option<usize> {
+        self.by_id.get(id).copied()
+    }
+
     /// The NAOqi name of a joint from its Arora id.
-    pub(crate) fn naoqi_name(&self, id: &str) -> Option<&str> {
+    pub fn naoqi_name(&self, id: &str) -> Option<&str> {
         self.by_id.get(id).map(|&index| self.names[index].as_str())
     }
 
+    /// The NAOqi names, in the order given to [`JointTable::new`].
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
     /// The Arora ids, aligned with the NAOqi names.
-    #[cfg(test)]
-    pub(crate) fn ids(&self) -> &[String] {
+    pub fn ids(&self) -> &[String] {
         &self.ids
     }
 
     /// The `ALMemory` keys sampled for the joints, with the Arora key each one feeds; the
     /// order is stable and matches the values `ALMemory.getListData` returns.
-    pub(crate) fn memory_keys(&self) -> Vec<(String, String)> {
+    pub fn memory_keys(&self) -> Vec<(String, String)> {
         self.names
             .iter()
             .zip(&self.ids)

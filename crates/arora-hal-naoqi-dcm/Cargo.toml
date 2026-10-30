@@ -1,0 +1,30 @@
+[package]
+name = "arora-hal-naoqi-dcm"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/semio-ai/arora-aldebaran"
+description = "NAOqi DCM HAL for Arora: NAO and Pepper as Arora HALs from inside NAOqi, paced by the loop of the DCM"
+
+[lib]
+name = "arora_hal_naoqi_dcm"
+
+[dependencies]
+arora-hal = "4"
+# The services both NAOqi HALs call (Autonomous Life, ALMotion.rest, the description, the
+# sonars), the joint ids, the keys of the robot standard and the voice.
+arora-hal-naoqi = { path = "../arora-hal-naoqi", version = "0.3" }
+arora-types = "3"
+async-trait = "0.1"
+futures = "0.3"
+log = "0.4"
+# `module`: the DCM plugins of `qi::module::naoqi`, which give the loop of the DCM.
+qi = { package = "libqi-vibe", version = "1.1", features = ["module"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# rt-multi-thread: dropping the HAL waits for the robot to rest (`block_in_place`).
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+fake-naoqi = { path = "../fake-naoqi" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

@@ -4,9 +4,28 @@ resolver = "2"
 members = [
   "crates/arora-aldebaran",
   "crates/arora-hal-naoqi",
+  "crates/arora-hal-naoqi-dcm",
+  "crates/arora-naoqi-module",
   "crates/fake-naoqi",
 ]
 
 [profile.release]
 lto = "thin"
 debug = 1
+
+# The library NAOqi loads on a robot (crates/arora-naoqi-module/robot/build.sh): optimized for
+# size, for the robot's disk and memory (41 MB rather than 62 with release, i686). Panics
+# still unwind: the plugin catches them, so that a panic disables the plugin rather than
+# abort NAOqi.
+[profile.robot]
+inherits = "release"
+opt-level = "s"
+debug = false
+strip = true
+lto = "fat"
+codegen-units = 1
+
+# The interpreter WebAssembly modules run on where Cranelift has no backend (the NAO's
+# 32-bit x86): optimized for speed.
+[profile.robot.package.pulley-interpreter]
+opt-level = 3

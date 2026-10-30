@@ -368,6 +368,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "arora-hal-naoqi-dcm"
+version = "0.1.0"
+dependencies = [
+ "arora-hal",
+ "arora-hal-naoqi",
+ "arora-types",
+ "async-trait",
+ "fake-naoqi",
+ "futures",
+ "libqi-vibe",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "arora-module"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -391,6 +408,29 @@ dependencies = [
  "serde_yaml",
  "syn 3.0.9",
  "uuid",
+]
+
+[[package]]
+name = "arora-naoqi-module"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arora",
+ "arora-aldebaran",
+ "arora-hal",
+ "arora-hal-naoqi",
+ "arora-hal-naoqi-dcm",
+ "arora-simple-data-store",
+ "arora-types",
+ "clap",
+ "env_logger",
+ "fake-naoqi",
+ "libc",
+ "libqi-vibe",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2788,9 +2828,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libqi-macros-vibe"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e76e9283ccacc83ffe070ff927405e10de78a4f8660db65865c0558e862c0214"
+checksum = "e4f2f110dd92efd21f04376a8151d818b891bcc1296cd455049af611fb33274f"
 dependencies = [
  "convert_case 0.10.0",
  "proc-macro2",
@@ -2800,17 +2840,20 @@ dependencies = [
 
 [[package]]
 name = "libqi-vibe"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4168ff3aa0980089c3c11c75a0a2b8c788b2cf93be31b9c4980f8d3d7746002"
+checksum = "e7018c93e6d1b72457371094d475f56144fe2982858df854ebc159a0a4bb5508"
 dependencies = [
  "async-stream",
  "async-trait",
  "bytes",
+ "cc",
  "derive_more",
  "dirs",
  "either",
  "futures",
+ "libc",
+ "libloading 0.8.9",
  "libqi-macros-vibe",
  "machine-uid",
  "once_cell",
@@ -2832,6 +2875,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
 ]

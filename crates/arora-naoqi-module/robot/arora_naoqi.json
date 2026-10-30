@@ -1,0 +1,9 @@
+{
+  "tree": "ready",
+  "studio": false,
+  "robot": {
+    "joint_speed_limit": 1.0,
+    "rest_at_start": true,
+    "rest_on_exit": true
+  }
+}
