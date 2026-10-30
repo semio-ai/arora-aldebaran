@@ -8,10 +8,11 @@
 //! `naoqi`, the default, the first argument (or the `ROBOT` env var) is the address of its
 //! NAOqi or a path to a `NaoqiRobotConfig` JSON file, and an optional second one overrides it.
 //!
-//! The device serves the open local bridge. Built with the `studio` feature, it connects to
-//! Semio Studio instead, enrolling a device that is not enrolled with Studio first, unless
-//! the run passes `--no-studio`. Its enrollment and credential are arora's
-//! (`arora::studio`), the credential kept under the device's name.
+//! The device serves the open local bridge. Built with the `studio` feature, it serves its
+//! Semio Studio bridge instead, unless the run passes `--no-studio`: the device runs at once,
+//! and a device that is not enrolled with Studio enrolls while it runs, as `arora::studio`
+//! says: the device client enrolls it, presented by the run's front end, and the credential
+//! is kept under the device's name.
 //!
 //! `--device`, `--device-dir` and `--bridge-port` (`ARORA_DEVICE`, `ARORA_DEVICE_DIR`,
 //! `ARORA_BRIDGE_PORT`) give the device the run is: its name on this machine, its
@@ -108,16 +109,15 @@ async fn main() -> anyhow::Result<()> {
         label: "say \"Arora is ready\"".to_string(),
         prompt: None,
     }]);
+    #[cfg(feature = "studio")]
+    let enroller = frontend.operator.clone().enroller();
     // The modules the device carries, read before the robot is reached: a module directory
     // that does not read fails the start at once.
     let device = cli.runner.device()?;
     let builder = Arora::builder()
         .with_frontend(frontend)
         .with_module_dirs(device.dir(), &cli.runner.module)
-        .await?
-        .with_device(device);
-    #[cfg(feature = "studio")]
-    let builder = builder.with_studio(cli.studio.choice());
+        .await?;
 
     // One runtime carries everything: the HAL's tasks spawn on it at construction, its
     // voice speaks on it, and arora drives the device on it.
@@ -147,13 +147,32 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Built with `studio`, the run's bridge is the device's Studio bridge, reporting the
+    // model the HAL describes, unless the run passes `--no-studio`; the device enrolls beside
+    // the run, through the front end's enroller, the enrollment's end failing the run.
+    #[cfg(feature = "studio")]
+    let studio = if cli.studio.connects() {
+        let model = arora::studio::reported_model(&robot.hal.describe().await);
+        Some(arora::studio::of(&device)?.bridge(model))
+    } else {
+        None
+    };
+
     let mut builder = robot
-        .install(builder)
+        .install(builder.with_device(device))
         .with_data_store(Box::new(store))
         .with_host_module(HostModule::of::<naoqi_gestures::Module>())
         .with_step_period(STEP_PERIOD);
     if let Some(tree) = tree {
         builder = builder.with_groot(tree);
+    }
+    #[cfg(feature = "studio")]
+    if let Some((bridge, handle)) = studio {
+        let run = builder.with_bridge(Box::new(bridge)).run();
+        return tokio::select! {
+            ran = run => ran,
+            ended = handle.enroll_when_needed(&*enroller) => Err(ended.into()),
+        };
     }
     builder.run().await
 }
@@ -257,25 +276,23 @@ mod tests {
     #[cfg(feature = "studio")]
     #[test]
     fn a_run_connects_to_studio_unless_it_passes_no_studio() {
-        use arora::studio::Choice;
-        let choice = |args: &[&str]| {
+        let connects = |args: &[&str]| {
             Cli::try_parse_from(args.iter().copied())
                 .expect("the command line parses")
                 .studio
-                .choice()
+                .connects()
         };
-        assert_eq!(
-            choice(&["arora-aldebaran", "tcp://nao.local:9559"]),
-            Choice::Studio
-        );
-        assert_eq!(
-            choice(&["arora-aldebaran", "--no-studio", "tcp://nao.local:9559"]),
-            Choice::Local
-        );
-        assert_eq!(
-            choice(&["arora-aldebaran", "tcp://nao.local:9559", "--no-studio"]),
-            Choice::Local
-        );
+        assert!(connects(&["arora-aldebaran", "tcp://nao.local:9559"]));
+        assert!(!connects(&[
+            "arora-aldebaran",
+            "--no-studio",
+            "tcp://nao.local:9559"
+        ]));
+        assert!(!connects(&[
+            "arora-aldebaran",
+            "tcp://nao.local:9559",
+            "--no-studio"
+        ]));
         let error = Cli::try_parse_from(["arora-aldebaran", "--studio", "tcp://nao.local:9559"])
             .expect_err("--studio is refused");
         assert_eq!(error.kind(), ErrorKind::UnknownArgument);

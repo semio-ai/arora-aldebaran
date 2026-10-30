@@ -84,8 +84,10 @@ The device starts, the robot says "Arora is ready" with its hands, and:
 More logs: set `RUST_LOG=debug` before the command. Without a terminal (`nohup`, a
 service), the runner is headless and asks nothing.
 
-A run that connects to Studio ([Semio Studio](#semio-studio)) and is not enrolled yet shows
-an enrollment code on the terminal UI, to enter in Studio.
+A run built with Studio ([Semio Studio](#semio-studio)) whose device is not enrolled yet
+runs at once and enrolls while it runs: the terminal UI asks whether to enroll the device, its
+name and its model family, then shows an enrollment code in its prompt line, to enter in
+Studio.
 
 Options (`--help` lists them):
 
@@ -172,7 +174,8 @@ ssh -t nao@<robot_name>.local   # -t: the terminal UI needs a terminal
 The device then behaves as [from your computer](#3-use-it). Built with Studio, it enrolls
 on its first run: enter the code it shows in Studio. To leave it running after you log out,
 run it headless with `nohup`: an enrolled device connects with its saved credential, and one
-that is not enrolls with `STUDIO_ENROLLMENT_TOKEN` (see [Semio Studio](#semio-studio)).
+that is not enrolls with `STUDIO_ENROLLMENT_TOKEN`, else by the code it logs (see
+[Semio Studio](#semio-studio)).
 
 On the robot, the device directory follows the same rule as anywhere: `--device-dir`
 (`ARORA_DEVICE_DIR`) when given, else `semio/arora/devices/<name>/` in the user data
@@ -184,24 +187,31 @@ WebAssembly modules: a native module (a dynamic library) fails the start, naming
 
 ## Semio Studio
 
-Building with Semio Studio is the opt-in: the runner built with the `studio` feature connects
-to Studio on every run unless the run passes `--no-studio`; built without it, it serves the
-open local bridge and has no Studio option.
+Building with Semio Studio is the opt-in: the runner built with the `studio` feature serves
+the device's Studio bridge on every run unless the run passes `--no-studio`; built without
+it, it serves the open local bridge and has no Studio option.
 
 ```sh
 cargo run --release -p arora-aldebaran --features studio -- tcp://<robot_name>.local:9559
 ```
 
-A device enrolls with Studio once, on its first run that connects:
+The device runs at once. One that is not enrolled with Studio enrolls while it runs, once,
+its Studio bridge offline until then:
 
-- **by code**: the run shows a code, on the terminal UI's prompt line and in the log, which
-  you enter in Studio, choosing the device's owner;
+- **by code**: the terminal UI asks whether to enroll the device, its name and its model
+  family, then shows a code in its prompt line, which you enter in Studio, choosing the
+  device's owner; headless, the run asks nothing and logs the code (to standard error when
+  the log shows no info lines);
 - **with an enrollment token**, for a robot run with neither screen nor operator: create one
   in Studio and set it in `STUDIO_ENROLLMENT_TOKEN` for that run. It is read from the
   environment only and never logged.
 
 Studio then shows the device, with its name (`DEVICE_NAME`, else what you type on the
-terminal UI) and its model (`MODEL_FAMILY`, else what the HAL describes: `nao` for a NAO).
+terminal UI) and its model (`MODEL_FAMILY`, else what the HAL describes: `nao` for a NAO);
+the terminal UI's header shows its Studio record and id. A refused enrollment fails the run,
+and so does a Studio bridge that halts, such as on a credential of another Firebase project
+than the run's, the error naming the credentials directory to delete. Studio out of reach
+does not: the bridge connects again by itself.
 Later runs connect with the credential the enrollment saved, kept under the device's name in
 Semio's device store (`<data_local_dir>/semio/devices/<name>/`, or `SEMIO_DEVICE_STORE`): a
 device run from your computer and then deployed on the robot enrolls once on each machine.
@@ -495,7 +505,7 @@ device's start; `qicli call Arora.status` then says `running`. To remove it, put
 |---|---|---|
 | `tree` | `ready` | the behavior: `ready` ([the default behavior](#the-default-behavior)), `touch`, `none`, or the path of a Groot XML file |
 | `device`, `device_dir`, `bridge_port`, `modules` | as the runner's | the device: `--device`, `--device-dir`, `--bridge-port` and `--module` of the runner |
-| `studio` | `true` in a library built with Studio | `false` serves the open local bridge |
+| `studio` | `true` in a library built with Studio | `false` serves the open local bridge; otherwise the device serves its Studio bridge and, not enrolled, enrolls while it runs, by `STUDIO_ENROLLMENT_TOKEN` or a code it logs |
 | `log` | `info` | the log filter, as `RUST_LOG` |
 | `robot.joint_speed_limit` | 1.0 | the fastest a commanded joint moves, in rad/s |
 | `robot.stiffness_ramp_ms` | 100 | how long a stiffness command takes to reach its value |

@@ -38,5 +38,11 @@ All notable changes to `arora-naoqi-module`. The format follows
 
 ### Changed
 
-- On Arora 17 (was 16), with the other dependencies updated to their latest compatible
-  versions.
+- **Breaking:** on arora 18 (was 16), with the other dependencies updated to their latest
+  compatible versions. Built with `studio`, the device runs at once with its Studio bridge,
+  unless `arora_naoqi.json` sets `"studio": false`, and a device that is not enrolled with
+  Studio enrolls while it runs, unattended: by the token in `STUDIO_ENROLLMENT_TOKEN`, else
+  by a code it logs. A refused enrollment stops the device, which the `Arora` service reports
+  as failed, and so does a Studio bridge that halts; Studio out of reach no longer does. To
+  migrate: a robot that should enroll with nobody reading its log sets
+  `STUDIO_ENROLLMENT_TOKEN` in the environment of NAOqi; `arora_naoqi.json` is unchanged.
