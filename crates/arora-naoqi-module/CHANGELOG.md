@@ -8,6 +8,11 @@ All notable changes to `arora-naoqi-module`. The format follows
 
 ### Added
 
+- `robot/build.sh` takes the cross toolchain of the robot's NAOqi (`ctc-linux64-atom-2.1.4.13`):
+  the bridge is built against its NAOqi headers and its Boost, and the symbols the library needs
+  are checked against the robot's libraries it holds (`check-symbols.sh <library> <-m32>
+  <directories>`). The library builds against that of NAOqi 2.1.4.13, and needs nothing its
+  libraries (the libstdc++ of GCC 4.5, glibc 2.13) do not define.
 - The crate: `libarora_naoqi.so`, the library NAOqi loads from its `autoload.ini`. Its DCM
   plugin `AroraDcm` runs the DCM HAL in the loop of the DCM and starts the device on a thread
   of its own, on that HAL: the default behavior of `arora-aldebaran` (or the tree

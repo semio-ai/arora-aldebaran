@@ -20,28 +20,30 @@ On the robot (`ssh nao@$NAO`):
 ```sh
 uname -m; uname -r                       # i686 on a NAO V4/V5; the kernel
 /lib/libc.so.6 | head -1                 # the glibc: 2.12 or later
-strings /usr/lib/libstdc++.so.6 | grep -E '^GLIBCXX_3\.4\.(1[5-9])$'   # (to confirm the path)
-ls /usr/lib/libboost_system* /usr/lib/libalcommon.so    # (to confirm the paths)
+ls /usr/lib/libstdc++.so.6* /usr/lib/libboost_system* /usr/lib/libalcommon.so   # (to confirm the paths)
 cat /etc/naoqi-version 2>/dev/null
 ```
 
-Send back the output. The library needs the libstdc++ of GCC 4.8 (up to `GLIBCXX_3.4.19`): if
-the robot's is older, the symbol check of the build must be made against it (send the output
-of `strings /usr/lib/libstdc++.so.6 | grep GLIBCXX`).
+Send back the output. The build checks the library against the libraries of the cross
+toolchain of NAOqi 2.1.4.13 (glibc 2.13, the libstdc++ of GCC 4.5, Boost 1.55): a robot on
+another NAOqi needs the cross toolchain of its own.
 
-## 1. Build against the real SDK
+## 1. Build against the robot's cross toolchain
 
-On the computer, with the C++ SDK of the robot's NAOqi (`naoqi-sdk-2.1.4.13-linux32` for
-NAOqi 2.1):
+On the computer, with the cross toolchain of the robot's NAOqi (`ctc-linux64-atom-2.1.4.13` for
+NAOqi 2.1; where to get it is in [Build it](../../README.md#build-it)):
 
 ```sh
-crates/arora-naoqi-module/robot/build.sh <path to the SDK>
+crates/arora-naoqi-module/robot/build.sh <path to ctc-linux64-atom-2.1.4.13>
 ```
 
-- [ ] It builds. If it does not, send the compiler errors: the bridge was only built against a
-      stub of the SDK so far, and this is where a difference shows.
-- [ ] It ends with `every C++ symbol it needs is in the libstdc++ or libgcc_s of GCC 4.8,
-      NAOqi's or its Boost` and `newest glibc symbol version: GLIBC_2.12` (or older).
+- [ ] It builds, and ends with `newest glibc symbol version: GLIBC_2.12` and `every other symbol
+      it needs is in the robot's libraries`.
+
+This step passed on 2026-10-30 with `ctc-linux64-atom-2.1.4.13.zip` (SHA-256
+`6b72eb98…`): the bridge compiles against the real headers of NAOqi 2.1 and its Boost 1.55,
+and the robot's libraries (NAOqi's, the libstdc++ of GCC 4.5, glibc 2.13) define every symbol
+the library needs. If it fails for you, send the compiler errors or the missing symbols.
 
 ## 2. On the robot, outside NAOqi: the library loads
 
