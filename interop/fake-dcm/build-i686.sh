@@ -4,7 +4,9 @@
 # in the image of the robot's compiler: fake-dcm-i686.sh runs it there. Its stub of the SDK
 # also has the Boost.System NAOqi's libraries load (boost_system.cpp). Both are multithreaded,
 # as NAOqi and its SDK are: Boost gives its signals another mutex otherwise. Run build.sh first:
-# it builds the stub of the SDK.
+# it builds the stub of the SDK, which the library must be built against for this harness
+# (`NAOQI_SDK=interop/fake-dcm/build/sdk crates/arora-naoqi-module/robot/build.sh`), not
+# against the declarations of NAOqi 2.1 (robot/naoqi-2.1/), whose ABI the stub's is not.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROBOT=$(cd "$HERE/../../crates/arora-naoqi-module/robot" && pwd)

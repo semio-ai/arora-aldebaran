@@ -26,7 +26,7 @@ done
 docker run --rm --network none "${MOUNTS[@]}" "$("$(dirname "$0")/image.sh")" bash -c '
   set -euo pipefail
   library=$1; m=$2; shift 2
-  newest=$(objdump -T "$library" | grep -o "GLIBC_[0-9.]*" | sort -uV | tail -1)
+  newest=$(objdump -T "$library" | { grep -o "GLIBC_[0-9.]*" || true; } | sort -uV | tail -1)
   echo "newest glibc symbol version: $newest"
   case "$newest" in GLIBC_2.1[3-9]*|GLIBC_2.[2-9][0-9]*) echo "too new for NAOqi 2.1" >&2; exit 1;; esac
   if [ $# -gt 0 ]; then
@@ -40,12 +40,14 @@ docker run --rm --network none "${MOUNTS[@]}" "$("$(dirname "$0")/image.sh")" ba
   else
     where="the libstdc++ or libgcc_s of NAOqi 2.1 (GCC 4.5)"
     # The symbols of GCC 4.8 that GCC 4.5 had: of a version no newer than the robot'"'"'s.
-    nm -D --defined-only "$(readlink -f "$(g++ $m -print-file-name=libstdc++.so)")" \
+    # objdump -T: <address> <flags> <section> <size> <version> <name>, the version in
+    # parentheses when hidden.
+    objdump -T "$(readlink -f "$(g++ $m -print-file-name=libstdc++.so)")" \
       "$(readlink -f "$(g++ $m -print-file-name=libgcc_s.so.1)")" |
-      awk "NF == 3 {print \$3}" | sed "s/@@*/ /" > /tmp/versioned
+      awk "/ (GLIBCXX|CXXABI|GCC)_/ && !/\*UND\*/ {print \$NF, \$(NF - 1)}" | tr -d "()" > /tmp/versioned
     for newest in GLIBCXX_3.4.14 CXXABI_1.3.4 GCC_4.5.0; do
       awk "{print \$2}" /tmp/versioned | grep "^${newest%%_*}_" | sort -uV |
-        sed "/^$newest\$/q"
+        awk -v newest="$newest" "!past {print} \$0 == newest {past = 1}"
     done > /tmp/versions
     awk "NR == FNR {old[\$1]; next} \$2 in old {print \$1}" /tmp/versions /tmp/versioned |
       sort -u > /tmp/defined
