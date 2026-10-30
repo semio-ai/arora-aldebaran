@@ -29,14 +29,16 @@ the bridge creates, and the bridge's code on NAOqi's, so the declarations match 
 - the bridge compiled against either (without optimization, so that each function is its own)
   needs no symbol more with these declarations and defines no function, vtable or typeinfo
   more, and the ones both define have the same code and data, and reference the same string
-  literals (`"DCM"`, `"ALMemory"`...), wherever the object puts them. With the SDK, the object has more: the templates of libqi its headers
-  instantiate, which the bridge does not use.
+  literals (`"DCM"`, `"ALMemory"`...), wherever the object puts them. With the SDK, the
+  object has more: the templates of libqi its headers instantiate, which the bridge does not
+  use.
 
 It passed on 2026-10-30 against `ctc-linux64-atom-2.1.4.13` (SHA-256 `6b72eb98…`, see the
 readme): 519 functions, vtables and typeinfos the same in 32 bits, 517 in 64 bits. It fails on
 any of a changed order of virtual functions, a private member less, a member removed from a
-proxy, a wrong return type, a wrong parameter type or a wrong name of a module. Run it again when the bridge changes
-(a new version of libqi-vibe): a bridge using more of the SDK needs more declarations here.
+proxy, a wrong return type, a wrong parameter type or a wrong name of a module. Run it again
+when the bridge changes (a new version of libqi-vibe): a bridge using more of the SDK needs
+more declarations here.
 
 These declarations are NAOqi 2.1's: another NAOqi has its own ABI (its compiler, its Boost, its
 libqi, whose `qi::DynamicObject` is under every `ALModule`), and needs its own declarations,
