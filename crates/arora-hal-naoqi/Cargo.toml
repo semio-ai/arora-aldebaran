@@ -16,6 +16,8 @@ arora-module = "2.1"
 arora-types = "3"
 async-trait = "0.1"
 futures = "0.3"
+# statvfs and the clock tick of the system keys (`system`)
+libc = "0.2"
 log = "0.4"
 # The Rust implementation of the qi framework (libqi), the NAOqi middleware. The package is
 # `libqi-vibe`; the library is used as `qi`.

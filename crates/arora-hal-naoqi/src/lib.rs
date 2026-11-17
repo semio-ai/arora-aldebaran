@@ -33,6 +33,7 @@ pub use naoqi_hal::{NaoqiHal, Voice};
 pub mod say;
 pub mod services;
 pub mod standard;
+pub mod system;
 
 #[cfg(test)]
 mod tests {

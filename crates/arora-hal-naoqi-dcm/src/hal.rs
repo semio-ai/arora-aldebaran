@@ -47,6 +47,8 @@ struct Inner {
     rest_on_exit: bool,
     /// Whether base velocity keys were written, which the DCM does not drive: warned once.
     base_warned: AtomicBool,
+    /// The system keys' task (`arora_hal_naoqi::system`), aborted with the HAL.
+    system: Option<tokio::task::AbortHandle>,
 }
 
 impl DcmHal {
@@ -102,6 +104,14 @@ impl DcmHal {
             description.software_version.clone().unwrap_or_else(unknown),
             link.joints().len()
         );
+        // The system keys (`sys/`): this HAL runs inside NAOqi, on the robot, so the machine's are the robot's.
+        let system = config.sensors.system.then(|| {
+            let shared = Arc::clone(&link.shared);
+            arora_hal_naoqi::system::spawn(memory.clone(), true, None, move |change| {
+                let mut state = lock(&shared.state);
+                shared.publish(&mut state, change);
+            })
+        });
         link.set_commanding(true);
         Ok(Self {
             link,
@@ -112,6 +122,7 @@ impl DcmHal {
                 sonar,
                 rest_on_exit: config.rest_on_exit,
                 base_warned: AtomicBool::new(false),
+                system,
             }),
             voice,
             runtime: tokio::runtime::Handle::current(),
@@ -276,6 +287,9 @@ impl Hal for DcmHal {
 impl Drop for DcmHal {
     fn drop(&mut self) {
         self.link.set_commanding(false);
+        if let Some(task) = &self.inner.system {
+            task.abort();
+        }
         let inner = Arc::clone(&self.inner);
         let shutdown = async move {
             if inner.rest_on_exit {

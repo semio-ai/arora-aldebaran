@@ -369,6 +369,7 @@ dependencies = [
  "async-trait",
  "fake-naoqi",
  "futures",
+ "libc",
  "libqi-vibe",
  "log",
  "serde",

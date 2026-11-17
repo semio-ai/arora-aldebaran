@@ -8,6 +8,12 @@ All notable changes to `arora-hal-naoqi-dcm`. The format follows
 
 ### Added
 
+- The `sys/` keys of `arora_hal_naoqi::system`, sampled once a second on the HAL's runtime, never in the loop of the
+  DCM: the HAL runs inside NAOqi, so the machine's keys are the robot's, and its threads are NAOqi's (the DCM's,
+  ALMotion's, the device's). `sensors.system` turns them off.
+
+### Added
+
 - The crate: the DCM HAL. Its plugin (`naoqi::plugin`) runs in the loop of the DCM: it reads
   the sensors in place in `ALMemory` every cycle and sends what changed to the HAL's feeds,
   and sends the HAL's latest commands (joint targets and stiffness, LED groups) through DCM

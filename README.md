@@ -329,6 +329,10 @@ empty id, to an id with a `.`, or two joints to the same id.
 | `<joint>.target_stiffness` (0..1) | commanded | `ALMotion.setStiffnesses` |
 | `led.<group>.color` (`0xRRGGBB`), `led.<group>.intensity` | commanded | `ALLeds.fadeRGB`, `ALLeds.setIntensity` |
 | `velocity.{x,y}`, `rotation.z` (normalized -1..1) | commanded | `ALMotion.moveToward` |
+| `sys/head/temperature` (°C), `sys/battery/{charge,current,temperature,voltage,time_to_empty,cell_voltage_min,low}` | sensed, 1 Hz | `ALMemory` `Head/Temperature`, `Battery/…/Sensor/…` |
+| `sys/battery/status` (the 16-bit word), `status_bits`, `charging` / `fully_charged` / `discharging` (its bits 0x80 / 0x40 / 0x20, as NAOqi 2.1's `ALBattery` reads them) | sensed, 1 Hz | `ALMemory` `Battery/Charge/Sensor/Status` |
+| `sys/battery/nearly_empty`, `sys/diagnosis/battery/{active_error,passive_error,temperature_error,temperature_status}` | sensed, 1 Hz, when present | `ALMemory` `ALBattery/…`, `Diagnosis/…/Battery/…` |
+| `sys/load` (1 / 5 / 15 min), `sys/cpu/busy` (per hardware thread, 0..1), `sys/cpu/temperature` (°C), `sys/mem/available_mb`, `sys/tmpfs/{used,size}_mb`, `sys/threads/{names,cpu}` (this process's threads by name, share of a core), `sys/procs/{names,cpu}` (the other processes above 0.5 %), `sys/pid` | sensed, 1 Hz, on the robot only | `/proc`, `/sys`, `statvfs` |
 
 Numeric sensor keys are sampled from `ALMemory` at `sensor_period_ms` (50 ms by default) in
 one `getListData` call, and only changed values are reported. Touch keys are driven by
@@ -340,6 +344,15 @@ Commands reach the robot in the order they are written. When the HAL goes (the r
 stops), a base that may be moving is stopped (`ALMotion.moveToward(0, 0, 0)`), commands
 still queued are not sent, and the robot is put to rest (`ALMotion.rest`: it sits or
 crouches, then its joints are relaxed), so no joint stays stiffened.
+
+The `sys/` keys say what the robot's computer is doing, so that a recording carries its own cost: its load, its CPU per
+hardware thread, per thread of the HAL's process and per process, its temperatures, its battery, its free memory and
+its RAM tmpfs. They are sampled once a second on a task of the HAL's runtime (`arora_hal_naoqi::system`), under one
+prefix, `sys`, which a bridge client subscribes to. The machine's own keys are published only when the HAL runs on
+the robot (its NAOqi on `127.0.0.1` or `localhost`, or inside NAOqi): a HAL on a computer reports the robot's
+`ALMemory` ones only, never the computer's numbers under the robot's names. `sensors.system` turns them off. The
+same keys and names are published by deploy/nao-dcm-device's DCM HAL in
+[nao-rl](https://github.com/victorpaleologue/nao-rl).
 
 The HAL receives and publishes keys; it sets no key meta. Which keys remote writers may
 change is the device's to say: the runner opens `command.ready` only.
@@ -359,7 +372,7 @@ sets:
 | `joint_ids` | `{"mode": "snake_case"}` | joint ids: `snake_case`, `override` (`ids`: the listed joints only) or `extend` (`ids`: replaces the listed ones) |
 | `sensor_period_ms` | 50 | the sampling period of the sensors |
 | `joint_speed_fraction` | 0.3 | the fraction of the maximum joint speed `setAngles` moves at |
-| `sensors` | all `true` | the families sampled: `joints`, `battery`, `inertial`, `sonar`, `touch` |
+| `sensors` | all `true` | the families sampled: `joints`, `battery`, `inertial`, `sonar`, `touch`, `system` (the `sys/` keys) |
 | `disable_autonomous_life` | `true` | turn Autonomous Life off when connecting |
 | `rest_on_exit` | `true` | put the robot to rest when the HAL goes |
 

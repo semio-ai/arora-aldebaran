@@ -220,6 +220,9 @@ pub struct SensorsConfig {
     pub sonar: bool,
     #[serde(default = "default_true")]
     pub touch: bool,
+    /// The robot's load, CPU per thread and process, temperatures, battery, memory (the `sys/` keys, `system`).
+    #[serde(default = "default_true")]
+    pub system: bool,
 }
 
 /// Overrides of a [`SensorsConfig`]: the families it names are switched, the others kept.
@@ -235,6 +238,8 @@ pub struct SensorsOverrides {
     pub sonar: Option<bool>,
     #[serde(default)]
     pub touch: Option<bool>,
+    #[serde(default)]
+    pub system: Option<bool>,
 }
 
 impl SensorsConfig {
@@ -245,6 +250,7 @@ impl SensorsConfig {
             inertial,
             sonar,
             touch,
+            system,
         } = overrides;
         for (field, value) in [
             (&mut self.joints, joints),
@@ -252,6 +258,7 @@ impl SensorsConfig {
             (&mut self.inertial, inertial),
             (&mut self.sonar, sonar),
             (&mut self.touch, touch),
+            (&mut self.system, system),
         ] {
             if let Some(value) = value {
                 *field = value;
@@ -272,6 +279,7 @@ impl Default for SensorsConfig {
             inertial: true,
             sonar: true,
             touch: true,
+            system: true,
         }
     }
 }

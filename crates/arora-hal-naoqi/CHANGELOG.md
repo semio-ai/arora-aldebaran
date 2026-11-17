@@ -6,6 +6,14 @@ All notable changes to `arora-hal-naoqi`. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `system`: the robot's computer as keys under `sys/`, sampled once a second on a task of the HAL's runtime: load
+  average, CPU busy per hardware thread, CPU temperature, free memory, RAM tmpfs use, CPU per thread of this process
+  and per process, the process's pid (from `/proc`, `/sys` and `statvfs`, published only when the HAL runs on the
+  robot), and the head board's temperature and the battery's charge, current and temperature (`ALMemory`). The NAOqi
+  HAL publishes them; `sensors.system` (default `true`) turns them off.
+
 ### Removed
 
 - **Breaking:** the `arora-naoqi` runner and the `runner` and `studio` features: the runner
