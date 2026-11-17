@@ -329,7 +329,9 @@ empty id, to an id with a `.`, or two joints to the same id.
 | `<joint>.target_stiffness` (0..1) | commanded | `ALMotion.setStiffnesses` |
 | `led.<group>.color` (`0xRRGGBB`), `led.<group>.intensity` | commanded | `ALLeds.fadeRGB`, `ALLeds.setIntensity` |
 | `velocity.{x,y}`, `rotation.z` (normalized -1..1) | commanded | `ALMotion.moveToward` |
-| `sys/head/temperature` (°C), `sys/battery/{charge,current,temperature}` | sensed, 1 Hz | `ALMemory` `Head/Temperature`, battery keys |
+| `sys/head/temperature` (°C), `sys/battery/{charge,current,temperature,voltage,time_to_empty,cell_voltage_min,low}` | sensed, 1 Hz | `ALMemory` `Head/Temperature`, `Battery/…/Sensor/…` |
+| `sys/battery/status` (the 16-bit word), `status_bits`, `charging` / `fully_charged` / `discharging` (its bits 0x80 / 0x40 / 0x20, as NAOqi 2.1's `ALBattery` reads them) | sensed, 1 Hz | `ALMemory` `Battery/Charge/Sensor/Status` |
+| `sys/battery/nearly_empty`, `sys/diagnosis/battery/{active_error,passive_error,temperature_error,temperature_status}` | sensed, 1 Hz, when present | `ALMemory` `ALBattery/…`, `Diagnosis/…/Battery/…` |
 | `sys/load` (1 / 5 / 15 min), `sys/cpu/busy` (per hardware thread, 0..1), `sys/cpu/temperature` (°C), `sys/mem/available_mb`, `sys/tmpfs/{used,size}_mb`, `sys/threads/{names,cpu}` (this process's threads by name, share of a core), `sys/procs/{names,cpu}` (the other processes above 0.5 %), `sys/pid` | sensed, 1 Hz, on the robot only | `/proc`, `/sys`, `statvfs` |
 
 Numeric sensor keys are sampled from `ALMemory` at `sensor_period_ms` (50 ms by default) in

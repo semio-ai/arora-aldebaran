@@ -17,6 +17,10 @@
 //! | `sys/cpu/temperature` | f64 °C: the CPU's own sensor (`/sys/class/thermal`, `coretemp`); NaN when none |
 //! | `sys/head/temperature` | f64 °C: the head board's (ALMemory `Head/Temperature/Sensor/Value`) |
 //! | `sys/battery/charge` / `current` / `temperature` | f64: 0..1, A (negative: discharging), °C (ALMemory) |
+//! | `sys/battery/voltage` / `time_to_empty` / `cell_voltage_min` / `low` / `charging_sensor` | the DCM's other battery floats |
+//! | `sys/battery/status` / `status_bits` | i64: the status word (16 bits, signed) / the bits set |
+//! | `sys/battery/charging` / `fully_charged` / `discharging` | bool: its bits 0x80 / 0x40 / 0x20, as ALBattery reads them |
+//! | `sys/battery/nearly_empty`, `sys/diagnosis/battery/*` | i64: ALBattery's and ALDiagnosis's keys (when present) |
 //! | `sys/mem/available_mb` | f64: MemAvailable, else MemFree + Buffers + Cached (2.6 kernels) |
 //! | `sys/tmpfs/used_mb` / `sys/tmpfs/size_mb` | f64: the RAM tmpfs (`/var/volatile`, else `/tmp`) |
 //! | `sys/threads/names` / `sys/threads/cpu` | str[] / f32[]: this process's threads by name, share of a core |
@@ -39,13 +43,39 @@ use crate::conversions::qi_f64;
 /// How often the keys are sampled.
 pub const PERIOD: Duration = Duration::from_secs(1);
 
-/// ALMemory floats the sampler reads (absent ones are NaN).
-pub const MEMORY_KEYS: [(&str, &str); 4] = [
+/// ALMemory floats the sampler reads (the DCM's keys: floats, the battery's status word included); absent ones are NaN.
+pub const MEMORY_KEYS: [(&str, &str); 10] = [
     ("sys/head/temperature", "Device/SubDeviceList/Head/Temperature/Sensor/Value"),
     ("sys/battery/charge", "Device/SubDeviceList/Battery/Charge/Sensor/Value"),
     ("sys/battery/current", "Device/SubDeviceList/Battery/Current/Sensor/Value"),
     ("sys/battery/temperature", "Device/SubDeviceList/Battery/Temperature/Sensor/Value"),
+    ("sys/battery/voltage", "Device/SubDeviceList/Battery/Charge/Sensor/TotalVoltage"),
+    ("sys/battery/time_to_empty", "Device/SubDeviceList/Battery/Charge/Sensor/TimeToEmpty"),
+    ("sys/battery/cell_voltage_min", "Device/SubDeviceList/Battery/Charge/Sensor/CellVoltageMin"),
+    ("sys/battery/low", "Device/SubDeviceList/Battery/Charge/Sensor/BatteryLow"),
+    ("sys/battery/charging_sensor", "Device/SubDeviceList/Battery/Charge/Sensor/Charging"),
+    ("sys/battery/status", "Device/SubDeviceList/Battery/Charge/Sensor/Status"),
 ];
+/// ALMemory integers (ALBattery's and ALDiagnosis's keys); absent ones are not published.
+pub const MEMORY_INT_KEYS: [(&str, &str); 5] = [
+    ("sys/battery/nearly_empty", "ALBattery/Charge/BatteryNearlyEmpty"),
+    ("sys/diagnosis/battery/active_error", "Diagnosis/Active/Battery/Error"),
+    ("sys/diagnosis/battery/passive_error", "Diagnosis/Passive/Battery/Error"),
+    ("sys/diagnosis/battery/temperature_error", "Diagnosis/Temperature/Battery/Error"),
+    ("sys/diagnosis/battery/temperature_status", "Diagnosis/Temperature/Battery/Status"),
+];
+
+/// The battery's status word (`Charge/Sensor/Status`, a float in ALMemory) as NAOqi 2.1's ALBattery reads it
+/// (`libalbattery.so`, `ALBattery::xUpdateStatusFromMemory`: truncated, sign-extended from 16 bits, then bit 0x80 =
+/// charging, 0x40 = fully charged, 0x20 = discharging). The other bits are published as they are, not interpreted.
+pub fn battery_status(word: f32) -> Option<(i64, Vec<i64>, bool, bool, bool)> {
+    if !word.is_finite() {
+        return None;
+    }
+    let w = (word as i32) as i16 as i64;
+    let bits = (0..16).filter(|b| (w >> b) & 1 == 1).collect();
+    Some((w, bits, w & 0x80 != 0, w & 0x40 != 0, w & 0x20 != 0))
+}
 
 fn read(path: &str) -> Option<String> {
     std::fs::read_to_string(path).ok()
@@ -185,8 +215,26 @@ impl Sampler {
         let mut put = |k: &str, v: Value| {
             c.set.insert(Key::from(k), Some(v));
         };
+        // `memory`: the floats of MEMORY_KEYS, then the integers of MEMORY_INT_KEYS (NaN: absent)
         for (i, (k, _)) in MEMORY_KEYS.iter().enumerate() {
-            put(k, Value::F64(memory.get(i).copied().unwrap_or(f64::NAN)));
+            let x = memory.get(i).copied().unwrap_or(f64::NAN);
+            if *k == "sys/battery/status" {
+                if let Some((w, bits, charging, full, discharging)) = battery_status(x as f32) {
+                    put("sys/battery/status", Value::I64(w));
+                    put("sys/battery/status_bits", Value::ArrayI64(bits));
+                    put("sys/battery/charging", Value::Boolean(charging));
+                    put("sys/battery/fully_charged", Value::Boolean(full));
+                    put("sys/battery/discharging", Value::Boolean(discharging));
+                }
+            } else {
+                put(k, Value::F64(x));
+            }
+        }
+        for (i, (k, _)) in MEMORY_INT_KEYS.iter().enumerate() {
+            let x = memory.get(MEMORY_KEYS.len() + i).copied().unwrap_or(f64::NAN);
+            if x.is_finite() {
+                put(k, Value::I64(x as i64));
+            }
         }
         if !local {
             return c;
@@ -243,10 +291,10 @@ impl Sampler {
     }
 }
 
-/// The ALMemory floats of [`MEMORY_KEYS`] (NaN for a key the robot does not have).
+/// The ALMemory values of [`MEMORY_KEYS`] then [`MEMORY_INT_KEYS`], as numbers (NaN for a key the robot does not have).
 pub async fn memory_floats(memory: &AnyObject) -> Vec<f64> {
-    let mut out = Vec::with_capacity(MEMORY_KEYS.len());
-    for (_, key) in MEMORY_KEYS {
+    let mut out = Vec::with_capacity(MEMORY_KEYS.len() + MEMORY_INT_KEYS.len());
+    for (_, key) in MEMORY_KEYS.iter().chain(MEMORY_INT_KEYS.iter()) {
         let v = memory.call::<Dynamic<QiValue<'static>>, _, _>("getData", key.to_string()).await;
         out.push(v.ok().and_then(|Dynamic(v)| qi_f64(&v)).unwrap_or(f64::NAN));
     }
@@ -299,20 +347,26 @@ mod tests {
     #[test]
     fn samples_this_machine() {
         let mut s = Sampler::default();
-        let first = s.sample(&[61.0, 0.8, -1.2, 30.0], Some((0, 0, 0, 0)), true);
+        let mem = [61.0, 0.8, -1.2, 30.0, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, -32628.0, 0.0, f64::NAN, f64::NAN, f64::NAN, f64::NAN];
+        let first = s.sample(&mem, Some((0, 0, 0, 0)), true);
         assert!(first.set.contains_key(&Key::from("sys/load")) && !first.set.contains_key(&Key::from("sys/cpu/busy")));
         let x: u64 = (0..2_000_000u64).map(|i| i ^ (i >> 3)).sum();
         assert!(x > 0);
-        let c = s.sample(&[61.0, 0.8, -1.2, 30.0], Some((100, 99, 0, 10_500)), true);
+        let c = s.sample(&mem, Some((100, 99, 0, 10_500)), true);
         let get = |k: &str| c.set.get(&Key::from(k)).cloned().flatten();
         assert!(matches!(get("sys/cpu/busy"), Some(Value::ArrayF32(v)) if !v.is_empty()));
         assert!(matches!(get("sys/threads/names"), Some(Value::ArrayString(v)) if !v.is_empty()));
         assert!(matches!(get("sys/dcm/share_9_11"), Some(Value::F64(x)) if (x - 0.99).abs() < 1e-9));
         assert!(matches!(get("sys/head/temperature"), Some(Value::F64(x)) if x == 61.0));
+        // tealk 2026-11-17: -32628 = 0x808C, "charging" while discharging at -0.84 A
+        assert_eq!(battery_status(-32628.0), Some((-32628, vec![2, 3, 7, 15], true, false, false)));
+        assert!(matches!(get("sys/battery/charging"), Some(Value::Boolean(true))));
+        assert!(matches!(get("sys/battery/nearly_empty"), Some(Value::I64(0))));
+        assert!(get("sys/diagnosis/battery/active_error").is_none());
         assert!(matches!(get("sys/mem/available_mb"), Some(Value::F64(x)) if x > 0.0));
         assert_eq!(stat_ticks("12 (a b) S 1 2 3 4 5 6 7 8 9 10 7 3 0"), Some(("a b".into(), 10)));
         // not the robot: its ALMemory keys only
         let remote = Sampler::default().sample(&[61.0, f64::NAN, f64::NAN, f64::NAN], None, false);
-        assert_eq!(remote.set.len(), MEMORY_KEYS.len());
+        assert_eq!(remote.set.len(), MEMORY_KEYS.len() - 1, "the ALMemory floats only (no status word: absent)");
     }
 }
