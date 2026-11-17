@@ -201,6 +201,17 @@ impl NaoqiHal {
             })
             .abort_handle(),
         );
+        // The system keys (`sys/`): the robot's ALMemory floats always; its load, CPU and memory only when this HAL
+        // runs on the robot (its NAOqi on this machine), never the desk's under the robot's names.
+        if inner.config.sensors.system {
+            let publisher = Arc::clone(&inner);
+            tasks.push(crate::system::spawn(
+                inner.memory.clone(),
+                crate::system::is_local(&inner.config.url),
+                None,
+                move |change| publisher.publish(change),
+            ));
+        }
         // The touch event tasks.
         if inner.config.sensors.touch {
             for (event, key) in keys::TOUCH_EVENTS {

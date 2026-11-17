@@ -407,3 +407,15 @@ async fn connection_failures_are_reported() {
         .expect("no NAOqi listens on port 1");
     assert!(error.to_string().contains("connection"), "{error}");
 }
+
+/// The system keys (`sys/`): a fake NAOqi on this machine is "the robot", so the HAL publishes the machine's load,
+/// CPU and memory with the ALMemory floats.
+#[tokio::test(flavor = "multi_thread")]
+async fn publishes_the_system_keys() {
+    let (_robot, hal) = start().await;
+    let mut feed = hal.updates();
+    let load = wait_for(&mut feed, "sys/load", |v| matches!(v, Some(Value::ArrayF32(a)) if a.len() == 3)).await;
+    assert!(matches!(load, Some(Value::ArrayF32(_))));
+    wait_for(&mut feed, "sys/threads/names", |v| matches!(v, Some(Value::ArrayString(a)) if !a.is_empty())).await;
+    assert!(hal.read(&[Key::from("sys/head/temperature")]).await.unwrap()[0].is_some());
+}
